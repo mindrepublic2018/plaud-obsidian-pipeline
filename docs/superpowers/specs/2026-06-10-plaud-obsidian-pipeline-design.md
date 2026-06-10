@@ -122,14 +122,14 @@ PLAUD 녹음 →(BT)→ PLAUD 클라우드(무료)
 
 ## 9. 개인정보 스크럽 체크리스트 (구현·검증)
 
-- [ ] `Mindrepublic` → `VAULT_PATH`/config로 치환
-- [ ] `06_통화메모` → `OUTPUT_DIR`로 치환
-- [ ] `com.mindrepublic.*` → `com.plaud-obsidian.*`
+- [ ] 기존 개인 볼트명 → `VAULT_PATH`/config로 치환
+- [ ] 기존 개인 출력 폴더명 → `OUTPUT_DIR`로 치환
+- [ ] 기존 개인 launchd 라벨 → `com.plaud-obsidian.*`
 - [ ] `pulled_ids.txt`/`skipped_ids.txt` 레포 미포함(설치 시 빈 파일 생성, gitignore)
 - [ ] `~/.plaud/tokens.json`(OAuth 시크릿) 레포 미포함 — `plaud login`으로 각자 생성
 - [ ] logs/, models/(*.bin), *.mp3 레포 미포함(gitignore)
-- [ ] Mac Studio 이전 서사 → 일반 설치 가이드로 재작성
-- [ ] 최종 검증: 레포 루트에서 `grep -ri "mindrepublic\|통화메모\|sinminkyu" .` → 0건
+- [ ] 기존 머신 이전(migration) 서사 → 일반 설치 가이드로 재작성
+- [ ] 최종 검증: 레포 루트에서 개인 식별 문자열(이전 볼트명·계정명·머신명) grep → 0건
 
 ## 10. 테스트/검증
 
