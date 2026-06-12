@@ -1,5 +1,7 @@
 # plaud-obsidian-pipeline
 
+[English](README.en.md) | **한국어**
+
 > PLAUD 녹음을 **구독 없이(기기값만)** 빼와, **로컬 Whisper** 로 전사하고 LLM 으로 요약해
 > **Obsidian 노트**로 자동 생성하는 macOS 파이프라인.
 
