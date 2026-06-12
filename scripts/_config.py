@@ -9,10 +9,15 @@ CLI:
   python3 scripts/_config.py --get KEY  # 특정 키의 해석된 값만 출력 (install.sh 용)
 """
 import os
+import shutil
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(REPO_ROOT, "config.env")
 HOME = os.path.expanduser("~")
+STATE_DIR = os.path.join(REPO_ROOT, "state")
+
+# v1 에서 레포 루트에 두던 상태파일 (state/ 로 마이그레이션 대상)
+LEGACY_STATE_FILES = ("pulled_ids.txt", "skipped_ids.txt")
 
 # 사용자가 config.env 에서 지정할 수 있는 키와 기본값.
 # 빈 문자열 기본값은 "VAULT_PATH 등 다른 값에서 파생"을 의미한다.
@@ -79,11 +84,24 @@ def load():
     # 레포 안에 두는 런타임 경로 (전부 .gitignore 대상)
     cfg["REPO_ROOT"] = REPO_ROOT
     cfg["MODEL_PATH"] = os.path.join(REPO_ROOT, "models", cfg["WHISPER_MODEL"])
-    cfg["STATE_PATH"] = os.path.join(REPO_ROOT, "pulled_ids.txt")
-    cfg["SKIP_PATH"] = os.path.join(REPO_ROOT, "skipped_ids.txt")
     cfg["LOG_DIR"] = os.path.join(REPO_ROOT, "logs")
-    cfg["LOCK_PATH"] = os.path.join(REPO_ROOT, ".lock")
+    cfg["STATE_DIR"] = STATE_DIR
+    cfg["STATE_PATH"] = os.path.join(STATE_DIR, "pulled_ids.txt")
+    cfg["SKIP_PATH"] = os.path.join(STATE_DIR, "skipped_ids.txt")
+    cfg["LOCK_PATH"] = os.path.join(STATE_DIR, ".lock")
+    cfg["PULL_LOCK_PATH"] = os.path.join(STATE_DIR, ".pull.lock")
+    cfg["FAIL_PATH"] = os.path.join(STATE_DIR, "transcribe_failures.txt")
     return cfg
+
+
+def migrate_legacy_state():
+    """v1(레포 루트) 상태파일을 state/ 로 이동. 멱등 — 스크립트 시작 시 호출."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    for name in LEGACY_STATE_FILES:
+        old = os.path.join(REPO_ROOT, name)
+        new = os.path.join(STATE_DIR, name)
+        if os.path.isfile(old) and not os.path.isfile(new):
+            shutil.move(old, new)
 
 
 if __name__ == "__main__":

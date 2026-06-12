@@ -10,14 +10,16 @@ import os
 import re
 import subprocess
 import datetime
+import fcntl
 import shutil
 
-from _config import load, HOME
+from _config import load, migrate_legacy_state, HOME
 
 CFG = load()
 INBOX = CFG["INBOX_DIR"]
 STATE = CFG["STATE_PATH"]        # 이미 받은 id (dedup)
 SKIP = CFG["SKIP_PATH"]          # audio 없음 등 영구 스킵
+PULL_LOCK = CFG["PULL_LOCK_PATH"]
 LOGDIR = CFG["LOG_DIR"]
 CURL = shutil.which("curl") or "/usr/bin/curl"
 PAGE_SIZE = 100
@@ -79,6 +81,18 @@ def run(args, timeout=120):
     return subprocess.run([PLAUD, *args], capture_output=True, text=True, timeout=timeout, env=_env())
 
 
+def parse_files_output(text, default_date=None):
+    """`plaud files` 출력 한 페이지에서 (id, date) 추출 (사람용 텍스트 출력 파싱)."""
+    default = default_date or datetime.date.today().strftime("%Y-%m-%d")
+    items = []
+    for ln in text.splitlines():
+        m = ID_RE.match(ln.strip())
+        if m:
+            d = DATE_RE.search(ln)
+            items.append((m.group(1), d.group(1) if d else default))
+    return items
+
+
 def list_all_files():
     """모든 페이지의 (id, date) 수집."""
     out = []
@@ -88,13 +102,11 @@ def list_all_files():
         if r.returncode != 0:
             log(f"files 실패 p{page}: {r.stderr.strip()[:160] or r.stdout.strip()[:160]}")
             break
-        ids_this = []
-        for ln in r.stdout.splitlines():
-            m = ID_RE.match(ln.strip())
-            if m:
-                fid = m.group(1)
-                d = DATE_RE.search(ln)
-                ids_this.append((fid, d.group(1) if d else datetime.date.today().strftime("%Y-%m-%d")))
+        ids_this = parse_files_output(r.stdout)
+        # CLI 가 성공했고 출력도 있는데 id 가 하나도 안 잡히면 출력 포맷 변경 의심
+        if page == 1 and not ids_this and r.stdout.strip():
+            log("경고: files 출력에서 녹음 id 를 못 찾음 — 녹음이 0개이거나 "
+                "plaud CLI 출력 포맷이 바뀌었을 수 있음 (`plaud update` 확인)")
         out.extend(ids_this)
         if len(ids_this) < PAGE_SIZE:
             break
@@ -119,13 +131,7 @@ def download(url, dest):
     return r.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 1000
 
 
-def main():
-    if not CFG.get("VAULT_PATH"):
-        log("VAULT_PATH 미설정 — config.env 를 확인하세요")
-        return
-    if not (os.path.isfile(PLAUD) or shutil.which("plaud")):
-        log(f"plaud CLI 없음: {PLAUD} (npm install -g @plaud-ai/cli 후 plaud login)")
-        return
+def pull_new():
     os.makedirs(INBOX, exist_ok=True)
     pulled, skipped = load_set(STATE), load_set(SKIP)
     files = list_all_files()
@@ -152,6 +158,29 @@ def main():
         shutil.move(tmp, dest)         # 원자적 이동 → 워처가 완전한 파일만 봄
         add_to(STATE, fid)
         log(f"  ✓ 받음 → {os.path.basename(dest)}")
+
+
+def main():
+    if not CFG.get("VAULT_PATH"):
+        log("VAULT_PATH 미설정 — config.env 를 확인하세요")
+        return
+    if not (os.path.isfile(PLAUD) or shutil.which("plaud")):
+        log(f"plaud CLI 없음: {PLAUD} (npm install -g @plaud-ai/cli 후 plaud login)")
+        return
+    migrate_legacy_state()
+    # 타이머 주기보다 pull 이 오래 걸릴 때(첫 동기화 등) 겹침 방지
+    lockf = open(PULL_LOCK, "w")
+    try:
+        fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("이전 pull 아직 실행 중 — 종료")
+        lockf.close()
+        return
+    try:
+        pull_new()
+    finally:
+        fcntl.flock(lockf, fcntl.LOCK_UN)
+        lockf.close()
 
 
 if __name__ == "__main__":

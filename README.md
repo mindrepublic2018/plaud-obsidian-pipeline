@@ -47,7 +47,7 @@ PLAUD 녹음 →(BT)→ PLAUD 클라우드(무료 저장)
 ## 설치
 
 ```bash
-git clone https://github.com/<your-account>/plaud-obsidian-pipeline.git
+git clone https://github.com/mindrepublic2018/plaud-obsidian-pipeline.git
 cd plaud-obsidian-pipeline
 bash install.sh
 ```
@@ -125,8 +125,10 @@ tail -f logs/pipeline.log
 | 노트 없이 전사만 저장됨 | `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치 |
 | 같은 녹음이 중복 처리 | 여러 맥에서 동시에 켜둠 → 한 대만 두고 나머지 `bash uninstall.sh` |
 | 주기 pull 안 됨 | 맥이 잠듦 → 시스템 설정에서 잠자기 방지 |
+| 오디오가 `_inbox/_failed/` 에 있음 | 전사 3회 연속 실패 시 자동 격리(무한 재시도 방지). 파일 확인 후 다시 `_inbox` 로 옮기면 재시도 |
 
 로그: `logs/pipeline.log`, `logs/launchd.err.log`, `logs/plaudpull.err.log`.
+런타임 상태(받은 녹음 id, 실패 카운트, 락)는 레포의 `state/` 폴더에 저장됩니다(커밋 안 됨).
 
 ---
 
@@ -146,6 +148,12 @@ PLAUD 토큰 삭제: `rm -rf ~/.plaud`.
 - **녹음·전사·노트는 전부 본인 맥/볼트에 머뭅니다.** 전사는 로컬 Whisper, 요약만 Claude(선택) 사용.
 - PLAUD OAuth 토큰은 `~/.plaud/tokens.json` 에 저장되며 이 레포에 **포함되지 않습니다**.
 - `config.env`, 로그, 모델, 오디오, 상태파일은 모두 `.gitignore` 처리되어 커밋되지 않습니다.
+
+## 개발 / 테스트
+
+```bash
+python3 -m unittest discover -s tests   # 의존성 없이 stdlib 만으로 실행
+```
 
 ## 라이선스
 

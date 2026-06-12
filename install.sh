@@ -89,8 +89,8 @@ echo "▶ 출력:    $OUTPUT_DIR"
 echo "▶ archive: $ARCHIVE_DIR"
 
 # 6. 디렉터리
-mkdir -p "$INBOX_DIR" "$OUTPUT_DIR" "$ARCHIVE_DIR" "$REPO/models" "$REPO/logs" "$LA"
-touch "$REPO/pulled_ids.txt" "$REPO/skipped_ids.txt"
+mkdir -p "$INBOX_DIR" "$OUTPUT_DIR" "$ARCHIVE_DIR" "$REPO/models" "$REPO/logs" "$REPO/state" "$LA"
+touch "$REPO/state/pulled_ids.txt" "$REPO/state/skipped_ids.txt"
 
 # 7. whisper 모델 (~1.5GB)
 if [ ! -f "$MODEL_PATH" ] || [ "$(stat -f%z "$MODEL_PATH" 2>/dev/null || echo 0)" -lt 1000000000 ]; then

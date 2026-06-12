@@ -15,7 +15,7 @@ import datetime
 import fcntl
 import shutil
 
-from _config import load, HOME
+from _config import load, migrate_legacy_state, HOME
 
 CFG = load()
 INBOX = CFG["INBOX_DIR"]
@@ -24,8 +24,12 @@ ARCHIVE = CFG["ARCHIVE_DIR"]
 MODEL = CFG["MODEL_PATH"]
 LOGDIR = CFG["LOG_DIR"]
 LOCK = CFG["LOCK_PATH"]
+FAIL_PATH = CFG["FAIL_PATH"]
 LANG = CFG["WHISPER_LANG"] or "ko"
 PROMPT_FILE = CFG.get("SUMMARY_PROMPT_FILE", "")
+
+# 전사 실패가 이 횟수에 도달하면 INBOX/_failed 로 격리 (무한 재시도 방지)
+MAX_TRANSCRIBE_FAILURES = 3
 
 
 # 절대경로 바이너리 (launchd 는 PATH 가 빈약함)
@@ -112,6 +116,54 @@ def stable(path, checks=3, delay=1.5):
     return last > 0
 
 
+def parse_summary(out):
+    """claude 출력에서 (title, body) 추출. 형식 불일치/빈 출력이면 폴백값."""
+    if out and "---BODY---" in out:
+        head, body = out.split("---BODY---", 1)
+        m = re.search(r"TITLE:\s*(.+)", head)
+        title = m.group(1).strip() if m else "음성메모"
+        return title, body.strip()
+    return "음성메모", ""
+
+
+def load_fail_counts(path):
+    """전사 실패 카운트 파일(이름<TAB>횟수) 로드. 깨진 줄은 무시."""
+    counts = {}
+    if not os.path.isfile(path):
+        return counts
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            parts = ln.rstrip("\n").split("\t")
+            if len(parts) == 2 and parts[1].isdigit():
+                counts[parts[0]] = int(parts[1])
+    return counts
+
+
+def save_fail_counts(path, counts):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for name, n in sorted(counts.items()):
+            f.write(f"{name}\t{n}\n")
+    os.replace(tmp, path)
+
+
+def bump_fail(counts, name):
+    """실패 횟수 +1 한 새 dict 반환 (원본 불변)."""
+    bumped = dict(counts)
+    bumped[name] = bumped.get(name, 0) + 1
+    return bumped
+
+
+def quarantine(audio):
+    """반복 실패한 오디오를 INBOX/_failed 로 이동해 재시도 루프에서 제외."""
+    failed_dir = os.path.join(INBOX, "_failed")
+    os.makedirs(failed_dir, exist_ok=True)
+    dest = os.path.join(failed_dir, os.path.basename(audio))
+    shutil.move(audio, dest)
+    return dest
+
+
 def run_claude(transcript):
     if not CLAUDE:
         return None
@@ -173,18 +225,23 @@ def process(audio):
         log(f"  파일 불안정/빈파일 — 건너뜀(다음 트리거에 재시도): {name}")
         return
     transcript = transcribe(audio)
+    counts = load_fail_counts(FAIL_PATH)
     if not transcript:
-        log(f"  전사 결과 없음 — 보류: {name}")
+        counts = bump_fail(counts, name)
+        n = counts[name]
+        if n >= MAX_TRANSCRIBE_FAILURES:
+            quarantine(audio)
+            counts = {k: v for k, v in counts.items() if k != name}
+            log(f"  전사 {MAX_TRANSCRIBE_FAILURES}회 실패 — _failed/ 로 격리: {name}")
+        else:
+            log(f"  전사 결과 없음({n}/{MAX_TRANSCRIBE_FAILURES}) — 보류: {name}")
+        save_fail_counts(FAIL_PATH, counts)
         return
-    title, body = "음성메모", ""
+    if name in counts:  # 성공 → 실패 기록 정리
+        save_fail_counts(FAIL_PATH, {k: v for k, v in counts.items() if k != name})
     out = run_claude(transcript)
-    if out and "---BODY---" in out:
-        head, body = out.split("---BODY---", 1)
-        m = re.search(r"TITLE:\s*(.+)", head)
-        if m:
-            title = m.group(1).strip()
-        body = body.strip()
-    else:
+    title, body = parse_summary(out)
+    if not body:
         log("  claude 요약 없음 — 전사만 저장(폴백)")
     today6 = datetime.date.today().strftime("%y%m%d")
     os.makedirs(OUTDIR, exist_ok=True)
@@ -217,6 +274,7 @@ def main():
     if not os.path.isfile(MODEL):
         log(f"모델 없음: {MODEL} (install.sh 가 다운로드. 완료 후 재시도)")
         return
+    migrate_legacy_state()
     os.makedirs(os.path.dirname(LOCK), exist_ok=True)
     lockf = open(LOCK, "w")
     try:

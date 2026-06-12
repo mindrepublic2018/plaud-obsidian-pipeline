@@ -1,7 +1,9 @@
 # 사용자별 설정 (시크릿/개인 경로 포함) — 절대 커밋 금지
 config.env
 
-# 런타임 상태 (개인 녹음 ID)
+# 런타임 상태 (개인 녹음 ID, 락, 실패 카운트)
+state/
+# v1 레거시 위치 (자동 마이그레이션 전 잔재)
 pulled_ids.txt
 skipped_ids.txt
 .lock
