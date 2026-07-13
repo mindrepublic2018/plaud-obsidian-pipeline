@@ -60,8 +60,11 @@ PLAUD 녹음 →(BT)→ PLAUD 클라우드(무료 저장)
 무겁습니다(torch 포함 수 GB). 클라우드 전송이 싫은데 화자분리는 필요할 때만 쓰세요.
 
 ```bash
-# 레포 루트에서 (Python 3.11 권장 — pyannote/torch 호환)
-python3.11 -m venv .venv-whisperx
+# Python 3.11 설치 (권장 버전 — pyannote/torch 호환. 시스템 python3 와 별개로 설치됨)
+brew install python@3.11
+
+# 레포 루트에서 venv 생성 + whisperx 설치
+$(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
 .venv-whisperx/bin/pip install whisperx
 ```
 
@@ -118,6 +121,10 @@ launchctl list | grep plaud-obsidian
 tail -f logs/pipeline.log
 ```
 
+**빠른 스모크 테스트**: 아무 오디오 파일(m4a/mp3 등)을 `INBOX_DIR`(기본 `$VAULT_PATH/_inbox`)에
+복사해 보세요. 1~2분 내 전사가 시작되고(`logs/pipeline.log` 에 "처리 시작" 로그), 끝나면
+`OUTPUT_DIR` 에 노트가 생깁니다 — PLAUD 녹음기 없이도 파이프라인 동작을 바로 확인할 수 있습니다.
+
 ---
 
 ## 설정 (`config.env`)
@@ -168,7 +175,7 @@ tail -f logs/pipeline.log
 | `plaud CLI 없음` | `npm install -g @plaud-ai/cli` → `plaud login` |
 | `녹음 목록 비어있음/조회 실패` | 토큰 만료 → `plaud login` 재실행 |
 | `모델 없음` | `install.sh` 의 다운로드가 끝났는지(`models/*.bin`) 확인 |
-| 노트 없이 전사만 저장됨 | `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치 |
+| 노트 없이 전사만 저장됨 | `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치. **구버전 CLI 도 원인** — 요약 호출이 `--tools`/`--no-session-persistence` 플래그를 쓰므로 오래된 버전이면 조용히 폴백됨 → `claude update` 후 재시도 (`logs/pipeline.log` 의 "claude 실패" 로그로 확인) |
 | 같은 녹음이 중복 처리 | 여러 맥에서 동시에 켜둠 → 한 대만 두고 나머지 `bash uninstall.sh` |
 | 주기 pull 안 됨 | 맥이 잠듦 → 시스템 설정에서 잠자기 방지 |
 | 오디오가 `_inbox/_failed/` 에 있음 | 전사 3회 연속 실패 시 자동 격리(무한 재시도 방지). 파일 확인 후 다시 `_inbox` 로 옮기면 재시도 |
