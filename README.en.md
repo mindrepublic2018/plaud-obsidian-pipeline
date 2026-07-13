@@ -3,12 +3,14 @@
 **English** | [한국어](README.md)
 
 > A macOS pipeline that pulls PLAUD recordings **without a subscription (device cost only)**,
-> transcribes them with **local Whisper**, summarizes with an LLM, and auto-creates **Obsidian notes**.
+> transcribes them (**local Whisper** by default, optional **speaker diarization**), summarizes them
+> into **six-section meeting notes** with an LLM, and auto-creates **Obsidian notes**.
 
 PLAUD only charges for **transcription (STT)** — **cloud storage and raw audio downloads are free**.
 By pulling the original MP3 with the official CLI (`plaud audio <id>`) and running transcription
 through **local Whisper**, you spend zero transcription quota and get voice-memo → note automation
-for **$0/month**.
+for **$0/month**. If you need speaker diarization (who said what), you can opt in to an
+AssemblyAI key (cloud) or WhisperX (local).
 
 > ⚠️ This project uses only the PLAUD **official CLI** (`@plaud-ai/cli`). No unofficial reverse-engineered APIs.
 > Pricing/ToS may change on PLAUD's side — verify against your own account.
@@ -26,14 +28,49 @@ PLAUD recorder →(BT)→ PLAUD cloud (free storage)
  INBOX_DIR (inside your Obsidian vault)
  │
  │  [launchd WatchPaths]  scripts/process_inbox.py
- │    ffmpeg (16k wav) → whisper-cli (transcribe) → claude -p (summarize) | transcript-only fallback
+ │    3-tier transcription chain: AssemblyAI (diarized, only if key set)
+ │      → WhisperX (local diarization, only if venv present) → whisper.cpp (always available)
+ │    → claude -p (6-section meeting summary + speaker-name inference) | transcript-only fallback
  ▼
- OUTPUT_DIR/{title}_{YYMMDD}.md     (+ original audio moved to ARCHIVE_DIR)
+ OUTPUT_DIR/{YYMMDD}_{title}.md     (+ original audio moved to ARCHIVE_DIR)
 ```
 
-- **Two triggers**: a timer (pull) + folder watch (process). No daemons — just macOS `launchd`.
-- **Transcription is 100% local**: whisper.cpp + `ggml-large-v3-turbo`. No internet, no fees.
+- **Three triggers**: a timer (pull) + folder watch (process) + daily 03:00 (archive pruning, opt-in). No daemons — just macOS `launchd`.
+- **Transcription is 100% local by default**: whisper.cpp + `ggml-large-v3-turbo`. No internet, no fees. Diarization is opt-in (see "Transcription engine chain").
 - **Summarization is a thin layer**: `claude -p` (headless). If missing or failing, the raw transcript is saved instead.
+- **Notes are dated by recording date**: filenames are `{YYMMDD}_{title}.md` so the file list sorts
+  chronologically, and the frontmatter `created` field uses the recording date too.
+
+---
+
+## Transcription engine chain
+
+`process_inbox.py` tries three engines in order, falling back to the next tier on failure.
+**With no extra setup it uses whisper.cpp only** — the same fully-local behavior as before.
+
+| Order | Engine | Diarization | How to enable | Notes |
+|---|---|---|---|---|
+| 1 | [AssemblyAI](https://www.assemblyai.com) (cloud, `universal-2`) | ✅ | Set `ASSEMBLYAI_API_KEY` in `config.env` | Paid API. **Audio is sent to AssemblyAI servers** |
+| 2 | WhisperX + pyannote (local) | ✅ | WhisperX setup below + `HF_TOKEN` | Free and local, but slow (CPU transcription + diarization) |
+| 3 | whisper.cpp (local) | ❌ | Default — installed by install.sh | Always-available final fallback |
+
+When diarization succeeds, the note gets a **per-speaker transcript** in the form
+`**[Speaker A(Kim)]** ...`, and the claude summary fills in speaker names only when there is
+clear evidence (self-introductions, titles, forms of address) in the transcript.
+
+### WhisperX setup (optional — local diarization)
+
+Heavy (several GB including torch). Use it only when you want diarization without sending audio to the cloud.
+
+```bash
+# From the repo root (Python 3.11 recommended — pyannote/torch compatibility)
+python3.11 -m venv .venv-whisperx
+.venv-whisperx/bin/pip install whisperx
+```
+
+1. Create a [HuggingFace token](https://huggingface.co/settings/tokens) and set `HF_TOKEN=hf_...` in `config.env`
+2. Accept the license on the [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) model page (gated model)
+3. Once the venv exists it is used automatically as tier 2. Test: `.venv-whisperx/bin/python scripts/whisperx_transcribe.py <audio-file>`
 
 ---
 
@@ -57,9 +94,9 @@ bash install.sh
 
 What `install.sh` does:
 1. Installs brew dependencies (`whisper-cpp`, `ffmpeg`) + `@plaud-ai/cli`
-2. If `config.env` is missing, **interactively** asks for your vault path / output folder / language and creates it
+2. If `config.env` is missing, **interactively** asks for your vault path / output folder / language / AssemblyAI key (optional) and creates it
 3. Downloads the whisper model (~1.5GB)
-4. Generates 2 launchd plists (pointing at this repo's location)
+4. Generates 3 launchd plists (pull/process/prune — pointing at this repo's location)
 
 > The scripts run **in place from this cloned repo folder** (nothing is copied).
 > If you move the repo, re-run `bash install.sh`.
@@ -75,6 +112,7 @@ plaud login
 # Load the launchd jobs
 launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.process.plist
 launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.pull.plist
+launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.prune.plist   # archive pruning (opt-in)
 ```
 
 Verify:
@@ -99,12 +137,18 @@ See `config.env.example`. `install.sh` generates it automatically; edit it any t
 | `WHISPER_MODEL` | `ggml-large-v3-turbo.bin` | whisper model filename |
 | `PULL_INTERVAL` | `900` | Pull interval in seconds |
 | `SUMMARY_PROMPT_FILE` | (built-in prompt) | Path to a custom summary prompt file |
+| `CLAUDE_MODEL` | `sonnet` | Model for `claude -p` summaries |
+| `ASSEMBLYAI_API_KEY` | (empty) | If set, cloud transcription+diarization becomes tier 1 ⚠️ audio leaves your machine |
+| `HF_TOKEN` | (empty) | HuggingFace token for local WhisperX diarization |
+| `AUDIO_RETENTION_DAYS` | `0` | Days to keep archived audio. 0 = never auto-delete |
 
 Values may use `~`, `$HOME`, and `$VAULT_PATH`.
 Check that your config resolves correctly: `python3 scripts/_config.py`.
 
-> The built-in summary prompt is written in Korean. For other languages, point
-> `SUMMARY_PROMPT_FILE` at your own prompt (keep the `TITLE: ... ---BODY---` output format).
+> The built-in summary prompt is written in Korean and produces a six-section meeting note
+> (agenda / key discussion / decisions / action items / next steps / overall tone memo).
+> For other languages, point `SUMMARY_PROMPT_FILE` at your own prompt — keep the
+> `TITLE: ... ---SPEAKERS--- ... ---BODY---` output contract (the SPEAKERS block is optional).
 
 ---
 
@@ -132,8 +176,11 @@ vault (`OUTPUT_DIR`) and reach mobile Obsidian through **whatever vault sync you
 | Same recording processed twice | Multiple Macs running it → keep one, run `bash uninstall.sh` on the rest |
 | Periodic pull not running | Mac is asleep → disable sleep in System Settings |
 | Audio sits in `_inbox/_failed/` | Auto-quarantined after 3 consecutive failed transcriptions (prevents retry loops). Inspect the file, move it back to `_inbox` to retry |
+| Repeated `audio not ready — will retry` logs | Long recordings take time to process on PLAUD's servers → normal. Retried for ~24h (96 attempts) before being permanently skipped |
+| No speaker diarization | No AssemblyAI key and no WhisperX venv → whisper.cpp fallback (no diarization) is the expected behavior. See "Transcription engine chain" |
+| Archived audio disappears | With `AUDIO_RETENTION_DAYS` > 0, audio older than the retention window is deleted daily at 03:00 (opt-in). Originals remain in PLAUD cloud |
 
-Logs: `logs/pipeline.log`, `logs/launchd.err.log`, `logs/plaudpull.err.log`.
+Logs: `logs/pipeline.log`, `logs/launchd.err.log`, `logs/plaudpull.err.log`, `logs/prune.out.log`.
 Runtime state (pulled recording ids, fail counts, locks) lives in the repo's `state/` folder (never committed).
 
 ---
@@ -151,9 +198,12 @@ To delete PLAUD tokens: `rm -rf ~/.plaud`.
 
 ## Privacy / Security
 
-- **Recordings, transcripts, and notes all stay on your Mac/vault.** Transcription is local Whisper; only the (optional) summary uses Claude.
+- **With the default configuration, recordings, transcripts, and notes all stay on your Mac/vault.** Transcription is local Whisper; only the (optional) summary uses Claude.
+- **Only if you set `ASSEMBLYAI_API_KEY`** is audio sent to AssemblyAI servers for transcription.
+  Leave the key empty (default) and audio never leaves your machine. Check AssemblyAI's data
+  retention policy against your own account settings. The WhisperX tier keeps diarization 100% local too.
 - The PLAUD OAuth token is stored in `~/.plaud/tokens.json` and is **never part of this repo**.
-- `config.env`, logs, models, audio, and state files are all `.gitignore`d.
+- API keys (`config.env`, `.assemblyai_key`, `.hf_token`), logs, models, audio, and state files are all `.gitignore`d.
 
 ## Development / Tests
 
