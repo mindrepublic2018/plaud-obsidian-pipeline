@@ -1,4 +1,5 @@
 """scripts/process_inbox.py 순수 함수 단위 테스트."""
+import datetime
 import os
 import sys
 import tempfile
@@ -22,25 +23,100 @@ class SlugifyTest(unittest.TestCase):
         self.assertEqual(process_inbox.slugify("///"), "음성메모")
 
 
-class ParseSummaryTest(unittest.TestCase):
-    def test_well_formed_output(self):
-        out = "TITLE: 주간 회의\n---BODY---\n## 🎯 한 줄 요약\n내용"
-        title, body = process_inbox.parse_summary(out)
+class ParseClaudeOutputTest(unittest.TestCase):
+    def test_well_formed_output_with_speakers(self):
+        out = ("TITLE: 주간 회의\n---SPEAKERS---\nA=김대표(대표)\nB=?\n"
+               "---BODY---\n## 📋 안건\n- 내용")
+        title, speaker_map, body = process_inbox.parse_claude_output(out)
         self.assertEqual(title, "주간 회의")
-        self.assertEqual(body, "## 🎯 한 줄 요약\n내용")
+        self.assertEqual(speaker_map, {"A": "김대표(대표)"})  # B=? 는 근거 없음 → 제외
+        self.assertEqual(body, "## 📋 안건\n- 내용")
+
+    def test_speaker_label_prefix_and_digit_keys(self):
+        out = "TITLE: t\n---SPEAKERS---\n화자 A=이과장\n3=박대리\n---BODY---\nb"
+        _, speaker_map, _ = process_inbox.parse_claude_output(out)
+        self.assertEqual(speaker_map, {"A": "이과장", "3": "박대리"})
+
+    def test_no_speakers_block_gives_empty_map(self):
+        title, speaker_map, body = process_inbox.parse_claude_output(
+            "TITLE: 회의\n---BODY---\n본문")
+        self.assertEqual(title, "회의")
+        self.assertEqual(speaker_map, {})
+        self.assertEqual(body, "본문")
 
     def test_missing_title_uses_default(self):
-        title, body = process_inbox.parse_summary("머리말\n---BODY---\n본문")
+        title, _, body = process_inbox.parse_claude_output("머리말\n---BODY---\n본문")
         self.assertEqual(title, "음성메모")
         self.assertEqual(body, "본문")
 
     def test_no_body_marker_returns_empty_body(self):
-        title, body = process_inbox.parse_summary("TITLE: 제목만 있음")
-        self.assertEqual(title, "음성메모")
-        self.assertEqual(body, "")
+        self.assertEqual(process_inbox.parse_claude_output("TITLE: 제목만 있음"),
+                         ("음성메모", {}, ""))
 
     def test_none_input(self):
-        self.assertEqual(process_inbox.parse_summary(None), ("음성메모", ""))
+        self.assertEqual(process_inbox.parse_claude_output(None), ("음성메모", {}, ""))
+
+
+class ParseWhisperxLinesTest(unittest.TestCase):
+    def test_speaker_indices_map_to_letters(self):
+        utts = process_inbox.parse_whisperx_lines("SPEAKER_00: 안녕하세요\nSPEAKER_01: 네 반갑습니다")
+        self.assertEqual(utts, [{"speaker": "화자 A", "text": "안녕하세요"},
+                                {"speaker": "화자 B", "text": "네 반갑습니다"}])
+
+    def test_unknown_speaker_line(self):
+        utts = process_inbox.parse_whisperx_lines("화자?: 누구 발화인지 모름")
+        self.assertEqual(utts, [{"speaker": "화자 ?", "text": "누구 발화인지 모름"}])
+
+    def test_continuation_line_appends_to_previous(self):
+        utts = process_inbox.parse_whisperx_lines("SPEAKER_00: 첫 문장\n이어지는 문장")
+        self.assertEqual(utts, [{"speaker": "화자 A", "text": "첫 문장 이어지는 문장"}])
+
+    def test_leading_bare_line_becomes_unknown_speaker(self):
+        utts = process_inbox.parse_whisperx_lines("라벨 없는 첫 줄")
+        self.assertEqual(utts, [{"speaker": "화자 ?", "text": "라벨 없는 첫 줄"}])
+
+    def test_empty_input_returns_none(self):
+        self.assertIsNone(process_inbox.parse_whisperx_lines(""))
+
+
+class RecordDateTest(unittest.TestCase):
+    def test_extracts_date_from_plaud_filename(self):
+        self.assertEqual(process_inbox.record_date("/x/plaud_2026-06-10_abcd1234.mp3"),
+                         datetime.date(2026, 6, 10))
+
+    def test_invalid_date_falls_back_to_today(self):
+        self.assertEqual(process_inbox.record_date("plaud_2026-13-40_x.mp3"),
+                         datetime.date.today())
+
+    def test_no_date_falls_back_to_today(self):
+        self.assertEqual(process_inbox.record_date("voice memo.m4a"), datetime.date.today())
+
+
+class UtterancesMarkdownTest(unittest.TestCase):
+    def test_mapped_speaker_gets_name_label(self):
+        md = process_inbox.utterances_markdown(
+            [{"speaker": "화자 A", "text": "안녕하세요"}], {"A": "김대표(대표)"})
+        self.assertEqual(md, "**[화자 A(김대표(대표))]** 안녕하세요")
+
+    def test_unmapped_speaker_keeps_plain_label(self):
+        md = process_inbox.utterances_markdown(
+            [{"speaker": "화자 B", "text": "네"}], {"A": "김대표"})
+        self.assertEqual(md, "**[화자 B]** 네")
+
+    def test_none_speaker_becomes_unknown(self):
+        md = process_inbox.utterances_markdown([{"speaker": None, "text": "텍스트"}], {})
+        self.assertEqual(md, "**[화자 ?]** 텍스트")
+
+
+class TranscriptForClaudeTest(unittest.TestCase):
+    def test_diarized_renders_speaker_lines(self):
+        t = process_inbox.transcript_for_claude(
+            [{"speaker": "화자 A", "text": "안녕"}, {"speaker": "화자 B", "text": "네"}], True)
+        self.assertEqual(t, "화자 A: 안녕\n화자 B: 네")
+
+    def test_plain_renders_text_only(self):
+        t = process_inbox.transcript_for_claude([{"speaker": None, "text": "전사 원문"}], False)
+        self.assertEqual(t, "전사 원문")
 
 
 class FailCountTest(unittest.TestCase):

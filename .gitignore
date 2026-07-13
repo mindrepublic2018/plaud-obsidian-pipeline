@@ -1,5 +1,10 @@
 # 사용자별 설정 (시크릿/개인 경로 포함) — 절대 커밋 금지
 config.env
+.assemblyai_key
+.hf_token
+
+# WhisperX 전용 venv (선택 기능, 로컬 생성)
+.venv-whisperx/
 
 # 런타임 상태 (개인 녹음 ID, 락, 실패 카운트)
 state/

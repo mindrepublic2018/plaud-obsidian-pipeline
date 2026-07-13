@@ -84,6 +84,23 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(cfg["LOCK_PATH"], os.path.join(state_dir, ".lock"))
         self.assertEqual(cfg["PULL_LOCK_PATH"], os.path.join(state_dir, ".pull.lock"))
         self.assertEqual(cfg["FAIL_PATH"], os.path.join(state_dir, "transcribe_failures.txt"))
+        self.assertEqual(cfg["PENDING_PATH"], os.path.join(state_dir, "pending_ids.txt"))
+
+    def test_optional_feature_defaults_are_off(self):
+        cfg = self._load_with("VAULT_PATH=/v\n")
+        self.assertEqual(cfg["ASSEMBLYAI_API_KEY"], "")
+        self.assertEqual(cfg["HF_TOKEN"], "")
+        self.assertEqual(cfg["CLAUDE_MODEL"], "sonnet")
+        self.assertEqual(cfg["AUDIO_RETENTION_DAYS"], "0")
+
+    def test_optional_paths_live_under_repo_root(self):
+        cfg = self._load_with("VAULT_PATH=/v\n")
+        self.assertEqual(cfg["AAI_KEY_PATH"], os.path.join(_config.REPO_ROOT, ".assemblyai_key"))
+        self.assertEqual(cfg["HF_TOKEN_PATH"], os.path.join(_config.REPO_ROOT, ".hf_token"))
+        self.assertEqual(cfg["WHISPERX_PY"],
+                         os.path.join(_config.REPO_ROOT, ".venv-whisperx", "bin", "python"))
+        self.assertEqual(cfg["WHISPERX_SCRIPT"],
+                         os.path.join(_config.REPO_ROOT, "scripts", "whisperx_transcribe.py"))
 
 
 if __name__ == "__main__":
