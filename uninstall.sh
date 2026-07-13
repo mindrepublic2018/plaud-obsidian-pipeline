@@ -9,8 +9,9 @@ set -uo pipefail
 LA="$HOME/Library/LaunchAgents"
 LABEL_PULL="com.plaud-obsidian.pull"
 LABEL_PROC="com.plaud-obsidian.process"
+LABEL_PRUNE="com.plaud-obsidian.prune"
 
-for label in "$LABEL_PROC" "$LABEL_PULL"; do
+for label in "$LABEL_PROC" "$LABEL_PULL" "$LABEL_PRUNE"; do
   plist="$LA/$label.plist"
   if [ -f "$plist" ]; then
     echo "▶ unload $label"

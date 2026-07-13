@@ -3,9 +3,9 @@
 # plaud-obsidian-pipeline — 설치 스크립트 (macOS)
 # 사용법:  bash install.sh
 #   1) brew 의존성(whisper-cpp, ffmpeg) + node + @plaud-ai/cli 설치
-#   2) config.env 없으면 대화형으로 생성 (볼트 경로/출력 폴더/언어)
+#   2) config.env 없으면 대화형으로 생성 (볼트 경로/출력 폴더/언어/AssemblyAI 키)
 #   3) whisper 모델(~1.5GB) 다운로드
-#   4) launchd plist 2개 생성 (이 레포 위치 기준)
+#   4) launchd plist 3개 생성 (pull/process/prune — 이 레포 위치 기준)
 #   5) 사용자 직접 단계 안내(plaud login 등) → launchctl load
 # 스크립트는 이 레포 디렉터리에서 in-place 실행됩니다(복사 안 함).
 # ============================================================
@@ -19,6 +19,7 @@ PY="$(command -v python3 || echo /opt/homebrew/bin/python3)"
 
 LABEL_PULL="com.plaud-obsidian.pull"
 LABEL_PROC="com.plaud-obsidian.process"
+LABEL_PRUNE="com.plaud-obsidian.prune"
 
 echo "▶ 레포: $REPO"
 echo "▶ python3: $PY"
@@ -56,12 +57,17 @@ if [ ! -f "$CONFIG" ]; then
   IN_OUT="${IN_OUT:-Voice Memos}"
   read -r -p "  전사 언어 (ko/en/ja...) [ko]: " IN_LANG
   IN_LANG="${IN_LANG:-ko}"
+  echo "  AssemblyAI API 키 (선택): 넣으면 클라우드 전사+화자분리를 1순위로 사용."
+  echo "  ⚠️ 키를 넣으면 오디오가 AssemblyAI 서버로 전송됩니다. 비우면 100% 로컬 전사."
+  read -r -p "  AssemblyAI API 키 [없음]: " IN_AAI
   {
     echo "# plaud-obsidian-pipeline 설정 (install.sh 가 생성)"
     echo "VAULT_PATH=$IN_VAULT"
     echo "OUTPUT_DIR=\$VAULT_PATH/$IN_OUT"
     echo "WHISPER_LANG=$IN_LANG"
+    if [ -n "$IN_AAI" ]; then echo "ASSEMBLYAI_API_KEY=$IN_AAI"; fi
   } > "$CONFIG"
+  chmod 600 "$CONFIG"
   echo "  ✓ config.env 작성 완료. (필요하면 직접 편집: $CONFIG)"
 else
   echo "▶ config.env 이미 있음 — 그대로 사용 (편집하려면: $CONFIG)"
@@ -101,7 +107,7 @@ else
   echo "▶ 모델 이미 있음 — 건너뜀"
 fi
 
-# 8. launchd plist 2개 생성
+# 8. launchd plist 3개 생성
 echo "▶ launchd plist 생성..."
 PATH_ENV="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.npm-global/bin"
 
@@ -134,6 +140,20 @@ cat > "$LA/$LABEL_PULL.plist" <<EOF
 </dict></plist>
 EOF
 
+# 아카이브 오디오 정리 (매일 03:00 — AUDIO_RETENTION_DAYS=0 이면 스크립트가 아무것도 안 지움)
+cat > "$LA/$LABEL_PRUNE.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL_PRUNE</string>
+  <key>ProgramArguments</key><array><string>$PY</string><string>$SCRIPTS/prune_audio.py</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$PATH_ENV</string><key>HOME</key><string>$HOME</string></dict>
+  <key>StandardOutPath</key><string>$REPO/logs/prune.out.log</string>
+  <key>StandardErrorPath</key><string>$REPO/logs/prune.err.log</string>
+</dict></plist>
+EOF
+
 echo ""
 echo "============================================================"
 echo "✅ 기계 설치 완료. 이제 본인이 직접 할 대화형 단계:"
@@ -146,6 +166,7 @@ echo ""
 echo "  그 다음 launchd 잡 로드:"
 echo "    launchctl load -w \"$LA/$LABEL_PROC.plist\""
 echo "    launchctl load -w \"$LA/$LABEL_PULL.plist\""
+echo "    launchctl load -w \"$LA/$LABEL_PRUNE.plist\"   # 아카이브 정리 (AUDIO_RETENTION_DAYS>0 일 때만 동작)"
 echo ""
 echo "  검증:"
 echo "    launchctl list | grep plaud-obsidian"

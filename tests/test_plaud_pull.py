@@ -1,6 +1,8 @@
 """scripts/plaud_pull.py 순수 함수 단위 테스트."""
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -37,6 +39,35 @@ class ParseFilesOutputTest(unittest.TestCase):
 
     def test_empty_output(self):
         self.assertEqual(plaud_pull.parse_files_output("", default_date="2026-01-01"), [])
+
+
+class PendingStateTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.mkdtemp()
+        self.path = os.path.join(d, "pending_ids.txt")
+        self.addCleanup(shutil.rmtree, d, True)
+
+    def test_load_missing_file_returns_empty(self):
+        self.assertEqual(plaud_pull.load_pending(self.path), {})
+
+    def test_roundtrip(self):
+        plaud_pull.save_pending(self.path, {FID1: 3, FID2: 95})
+        self.assertEqual(plaud_pull.load_pending(self.path), {FID1: 3, FID2: 95})
+
+    def test_line_without_count_defaults_to_zero(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(f"{FID1}\n")
+        self.assertEqual(plaud_pull.load_pending(self.path), {FID1: 0})
+
+    def test_malformed_count_defaults_to_zero(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(f"{FID1}\tNaN\n{FID2}\t7\n")
+        self.assertEqual(plaud_pull.load_pending(self.path), {FID1: 0, FID2: 7})
+
+    def test_save_overwrites_previous_content(self):
+        plaud_pull.save_pending(self.path, {FID1: 1, FID2: 2})
+        plaud_pull.save_pending(self.path, {FID2: 3})
+        self.assertEqual(plaud_pull.load_pending(self.path), {FID2: 3})
 
 
 if __name__ == "__main__":
