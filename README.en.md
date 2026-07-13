@@ -63,8 +63,11 @@ clear evidence (self-introductions, titles, forms of address) in the transcript.
 Heavy (several GB including torch). Use it only when you want diarization without sending audio to the cloud.
 
 ```bash
-# From the repo root (Python 3.11 recommended — pyannote/torch compatibility)
-python3.11 -m venv .venv-whisperx
+# Install Python 3.11 (recommended version — pyannote/torch compatibility; separate from system python3)
+brew install python@3.11
+
+# From the repo root, create the venv and install whisperx
+$(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
 .venv-whisperx/bin/pip install whisperx
 ```
 
@@ -121,6 +124,11 @@ launchctl list | grep plaud-obsidian
 tail -f logs/pipeline.log
 ```
 
+**Quick smoke test**: copy any audio file (m4a/mp3/...) into `INBOX_DIR` (default
+`$VAULT_PATH/_inbox`). Transcription starts within a minute or two (look for "처리 시작" in
+`logs/pipeline.log`), and a note appears in `OUTPUT_DIR` when it finishes — an instant way to
+confirm the pipeline works, no PLAUD recorder needed.
+
 ---
 
 ## Configuration (`config.env`)
@@ -172,7 +180,7 @@ vault (`OUTPUT_DIR`) and reach mobile Obsidian through **whatever vault sync you
 | `plaud CLI missing` | `npm install -g @plaud-ai/cli` → `plaud login` |
 | `recording list empty / query failed` | Token expired → re-run `plaud login` |
 | `model missing` | Check that `install.sh`'s download finished (`models/*.bin`) |
-| Note has transcript only, no summary | `claude` not installed / not logged in → normal fallback. Install Claude Code for summaries |
+| Note has transcript only, no summary | `claude` not installed / not logged in → normal fallback. Install Claude Code for summaries. **An outdated CLI also causes this** — the summary call uses the `--tools`/`--no-session-persistence` flags, so old versions fall back silently → run `claude update` and retry (check for "claude 실패" in `logs/pipeline.log`) |
 | Same recording processed twice | Multiple Macs running it → keep one, run `bash uninstall.sh` on the rest |
 | Periodic pull not running | Mac is asleep → disable sleep in System Settings |
 | Audio sits in `_inbox/_failed/` | Auto-quarantined after 3 consecutive failed transcriptions (prevents retry loops). Inspect the file, move it back to `_inbox` to retry |

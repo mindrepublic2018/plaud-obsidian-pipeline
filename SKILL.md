@@ -53,12 +53,14 @@ PLAUD 녹음을 **구독 없이(기기값만)** 빼와 전사(기본 로컬 whis
    ```
    - pull 이 한 번 돌면 `logs/pipeline.log` 에 "전체 N개 / 신규 M개" 가 찍힌다.
    - 첫 녹음이 처리되면 `OUTPUT_DIR` 에 노트가 생성된다.
+   - **스모크 테스트**: 아무 오디오 파일을 `INBOX_DIR` 에 복사하면 PLAUD 녹음 없이도 전사→노트
+     생성을 즉시 확인할 수 있다. 사용자에게 짧은 테스트 오디오를 넣어보게 하라.
 
 ## 트러블슈팅
 - **"plaud CLI 없음"**: `npm install -g @plaud-ai/cli` 후 `plaud login`.
 - **"녹음 목록 비어있음/조회 실패"**: 토큰 만료 → `plaud login` 재실행.
 - **"모델 없음"**: `install.sh` 의 모델 다운로드가 끝났는지 확인(`models/*.bin`).
-- **노트는 안 생기고 전사만**: `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치.
+- **노트는 안 생기고 전사만**: `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치. 설치돼 있는데도 폴백되면 구버전 CLI 가능성 — 요약 호출이 `--tools`/`--no-session-persistence` 플래그를 쓴다 → `claude update` 후 재시도. `logs/pipeline.log` 의 "claude 실패 rc=..." 로그로 진단.
 - **중복 처리**: 여러 맥에서 동시에 켜둔 경우 → 한 대만 두고 나머지는 `bash uninstall.sh`.
 - **주기 pull 안 됨**: 맥이 잠들면 안 됨(시스템 설정에서 잠자기 방지).
 - **오디오가 `_inbox/_failed/` 에 있음**: 전사 3회 연속 실패로 자동 격리된 것. 파일을 확인하고 다시 `_inbox` 로 옮기면 재시도된다.
