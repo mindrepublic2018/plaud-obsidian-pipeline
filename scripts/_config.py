@@ -31,8 +31,12 @@ DEFAULTS = {
     "PULL_INTERVAL": "900",
     "SUMMARY_PROMPT_FILE": "",
     "ASSEMBLYAI_API_KEY": "",     # 비우면 클라우드 전사 안 씀 (100% 로컬 동작)
+    "SPEAKERS_EXPECTED": "0",     # AssemblyAI 화자 수 힌트 (0 = 미전송, 통화는 2 권장)
     "HF_TOKEN": "",               # WhisperX 화자분리용 HuggingFace 토큰 (선택)
-    "CLAUDE_MODEL": "sonnet",     # claude -p 요약 모델
+    "ANTHROPIC_API_KEY": "",      # 비우면 요약 생략 (전사만 저장)
+    "CLAUDE_MODEL": "claude-opus-5",  # Claude API 요약 모델
+    "OPENAI_API_KEY": "",         # 비우면 GPT 교차검증 생략
+    "OPENAI_MODEL": "gpt-5.2",    # GPT 교차검증 모델
     "AUDIO_RETENTION_DAYS": "0",  # 아카이브 오디오 보관일. 0 = 자동삭제 안 함
 }
 
@@ -99,6 +103,8 @@ def load():
     # 선택 기능(클라우드 전사/화자분리)용 키 파일·경로 — config.env 값이 우선
     cfg["AAI_KEY_PATH"] = os.path.join(REPO_ROOT, ".assemblyai_key")
     cfg["HF_TOKEN_PATH"] = os.path.join(REPO_ROOT, ".hf_token")
+    cfg["ANTHROPIC_KEY_PATH"] = os.path.join(REPO_ROOT, ".anthropic_key")
+    cfg["OPENAI_KEY_PATH"] = os.path.join(REPO_ROOT, ".openai_key")
     cfg["WHISPERX_PY"] = os.path.join(REPO_ROOT, ".venv-whisperx", "bin", "python")
     cfg["WHISPERX_SCRIPT"] = os.path.join(REPO_ROOT, "scripts", "whisperx_transcribe.py")
     return cfg

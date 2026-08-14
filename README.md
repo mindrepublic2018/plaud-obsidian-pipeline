@@ -28,14 +28,16 @@ PLAUD 녹음 →(BT)→ PLAUD 클라우드(무료 저장)
  │  [launchd WatchPaths]  scripts/process_inbox.py
  │    전사 3단 체인: AssemblyAI(화자분리, 키 있을 때만) → WhisperX(로컬 화자분리, venv 있을 때만)
  │                  → whisper.cpp(항상 가능)
- │    → claude -p(6섹션 회의록 요약 + 화자 이름 추론) | 전사-only 폴백
+ │    → Claude API(6섹션 회의록 요약 + 화자 이름 추론) → GPT 교차검증(사실오류·누락 교정)
+ │      | 키 없으면 각각 전사-only 폴백 / 검증 생략
  ▼
  OUTPUT_DIR/{YYMMDD}_{제목}.md     (+ 원본 오디오는 ARCHIVE_DIR 로 이동)
 ```
 
 - **트리거 3종**: 타이머(pull) + 폴더감시(처리) + 일일 03:00(아카이브 정리, 옵트인). 별도 데몬 없이 macOS `launchd` 만 사용.
 - **전사는 기본 100% 로컬**: whisper.cpp + `ggml-large-v3-turbo`. 인터넷·과금 0. 화자분리는 옵트인(아래 '전사 엔진 체인').
-- **요약은 얇은 단계**: `claude -p`(헤드리스). 없거나 실패하면 전사 원문만 저장하는 폴백.
+- **요약은 얇은 단계**: Claude API 직접 호출(`ANTHROPIC_API_KEY`). 키가 없거나 실패하면 전사 원문만
+  저장하는 폴백. `OPENAI_API_KEY` 까지 있으면 GPT 가 전사 대비 요약의 사실오류·누락을 교정(교차검증).
 - **녹음일 기반 노트**: 파일명이 `{YYMMDD}_{제목}.md`(녹음일 기준) 라 파일 목록이 시간순으로 정렬되고,
   frontmatter `created` 도 녹음일로 찍힙니다.
 
@@ -80,7 +82,8 @@ $(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
 - [Homebrew](https://brew.sh)
 - Node.js (`brew install node`) — PLAUD 공식 CLI 설치용
 - PLAUD 계정 + 녹음기
-- (선택) [Claude Code](https://claude.com/claude-code) — 요약 단계용. 없으면 전사만 저장.
+- (선택) [Anthropic API 키](https://platform.claude.com) — 요약 단계용. 없으면 전사만 저장.
+- (선택) [OpenAI API 키](https://platform.openai.com) — 요약 교차검증(사실오류·누락 교정)용.
 
 ---
 
@@ -94,7 +97,7 @@ bash install.sh
 
 `install.sh` 가 하는 일:
 1. brew 의존성(`whisper-cpp`, `ffmpeg`) + `@plaud-ai/cli` 설치
-2. `config.env` 가 없으면 **대화형**으로 볼트 경로/출력 폴더/언어/AssemblyAI 키(선택)를 물어 생성
+2. `config.env` 가 없으면 **대화형**으로 볼트 경로/출력 폴더/언어/API 키 3종(선택)을 물어 생성
 3. whisper 모델(~1.5GB) 다운로드
 4. launchd plist 3개 생성 (pull/process/prune — 이 레포 위치 기준)
 
@@ -107,7 +110,9 @@ bash install.sh
 # (필수) PLAUD 로그인 — 브라우저 OAuth, 토큰은 ~/.plaud 에 저장(레포 밖)
 plaud login
 
-# (선택) 요약을 쓰려면 Claude Code 설치 후 로그인. 없으면 전사 원문만 저장됨.
+# (선택) 요약을 쓰려면 config.env 에 ANTHROPIC_API_KEY 를, 교차검증까지 원하면
+#        OPENAI_API_KEY 를 설정. 없으면 전사 원문만 저장됨.
+#        launchd 는 셸 환경변수를 못 보므로 키는 config.env(또는 키파일)에 둬야 합니다.
 
 # launchd 잡 로드
 launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.process.plist
@@ -141,8 +146,12 @@ tail -f logs/pipeline.log
 | `WHISPER_MODEL` | `ggml-large-v3-turbo.bin` | whisper 모델 파일명 |
 | `PULL_INTERVAL` | `900` | pull 주기(초) |
 | `SUMMARY_PROMPT_FILE` | (내장 프롬프트) | 요약 프롬프트 커스텀 파일 경로 |
-| `CLAUDE_MODEL` | `sonnet` | `claude -p` 요약 모델 |
+| `ANTHROPIC_API_KEY` | (없음) | 설정 시 Claude API 로 6섹션 회의록 요약 ⚠️전사 텍스트 외부 전송 |
+| `CLAUDE_MODEL` | `claude-opus-5` | Claude API 요약 모델 |
+| `OPENAI_API_KEY` | (없음) | 설정 시 GPT 가 요약을 전사와 대조해 교정 ⚠️전사+요약 외부 전송 |
+| `OPENAI_MODEL` | `gpt-5.2` | GPT 교차검증 모델 |
 | `ASSEMBLYAI_API_KEY` | (없음) | 설정 시 클라우드 전사+화자분리를 1순위 사용 ⚠️오디오 외부 전송 |
+| `SPEAKERS_EXPECTED` | `0` | AssemblyAI 화자 수 힌트(통화는 `2` 권장). `0` = 미사용 |
 | `HF_TOKEN` | (없음) | WhisperX 로컬 화자분리용 HuggingFace 토큰 |
 | `AUDIO_RETENTION_DAYS` | `0` | 아카이브 오디오 보관일. 0 = 자동삭제 안 함 |
 
@@ -175,7 +184,8 @@ tail -f logs/pipeline.log
 | `plaud CLI 없음` | `npm install -g @plaud-ai/cli` → `plaud login` |
 | `녹음 목록 비어있음/조회 실패` | 토큰 만료 → `plaud login` 재실행 |
 | `모델 없음` | `install.sh` 의 다운로드가 끝났는지(`models/*.bin`) 확인 |
-| 노트 없이 전사만 저장됨 | `claude` 미설치/미로그인 → 정상 폴백. 요약 원하면 Claude Code 설치. **구버전 CLI 도 원인** — 요약 호출이 `--tools`/`--no-session-persistence` 플래그를 쓰므로 오래된 버전이면 조용히 폴백됨 → `claude update` 후 재시도 (`logs/pipeline.log` 의 "claude 실패" 로그로 확인) |
+| 노트 없이 전사만 저장됨 (`status: summary_pending`) | `ANTHROPIC_API_KEY` 미설정 → 정상 폴백. 요약 원하면 config.env 에 키 설정. 키가 있는데도 폴백되면 `logs/pipeline.log` 의 "claude: HTTP ..." 로그 확인 — 401 은 키 오타, 429/529 는 일시 과부하(재시도됨) |
+| 노트 frontmatter 가 `verified: false` | `OPENAI_API_KEY` 미설정이거나 GPT 호출 실패 → Claude 요약이 그대로 저장된 정상 동작. 교차검증 원하면 키 설정 후 로그의 "gpt: ..." 확인 |
 | 같은 녹음이 중복 처리 | 여러 맥에서 동시에 켜둠 → 한 대만 두고 나머지 `bash uninstall.sh` |
 | 주기 pull 안 됨 | 맥이 잠듦 → 시스템 설정에서 잠자기 방지 |
 | 오디오가 `_inbox/_failed/` 에 있음 | 전사 3회 연속 실패 시 자동 격리(무한 재시도 방지). 파일 확인 후 다시 `_inbox` 로 옮기면 재시도 |
@@ -201,13 +211,14 @@ PLAUD 토큰 삭제: `rm -rf ~/.plaud`.
 
 ## 프라이버시 / 보안
 
-- **기본 설정에서 녹음·전사·노트는 전부 본인 맥/볼트에 머뭅니다.** 전사는 로컬 Whisper, 요약만 Claude(선택) 사용.
+- **기본 설정(키 없음)에서 녹음·전사·노트는 전부 본인 맥/볼트에 머뭅니다.** 전사는 로컬 Whisper.
+- **`ANTHROPIC_API_KEY` 를 설정한 경우에만** 전사 텍스트가 요약을 위해 Anthropic 서버로 전송됩니다.
+- **`OPENAI_API_KEY` 를 설정한 경우에만** 전사 텍스트와 요약이 교차검증을 위해 OpenAI 서버로 전송됩니다.
 - **`ASSEMBLYAI_API_KEY` 를 설정한 경우에만** 오디오가 전사를 위해 AssemblyAI 서버로 전송됩니다.
-  키를 비워두면(기본) 오디오는 외부로 나가지 않습니다. AssemblyAI 의 데이터 보존 정책은 본인 계정
-  설정으로 확인하세요. WhisperX 티어는 화자분리도 100% 로컬입니다.
+  각 서비스의 데이터 보존 정책은 본인 계정 설정으로 확인하세요. WhisperX 티어는 화자분리도 100% 로컬입니다.
 - PLAUD OAuth 토큰은 `~/.plaud/tokens.json` 에 저장되며 이 레포에 **포함되지 않습니다**.
-- API 키(`config.env`, `.assemblyai_key`, `.hf_token`), 로그, 모델, 오디오, 상태파일은 모두
-  `.gitignore` 처리되어 커밋되지 않습니다.
+- API 키(`config.env`, `.assemblyai_key`, `.anthropic_key`, `.openai_key`, `.hf_token`), 로그, 모델,
+  오디오, 상태파일은 모두 `.gitignore` 처리되어 커밋되지 않습니다.
 
 ## 개발 / 테스트
 

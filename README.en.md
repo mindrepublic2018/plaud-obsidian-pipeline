@@ -30,14 +30,18 @@ PLAUD recorder →(BT)→ PLAUD cloud (free storage)
  │  [launchd WatchPaths]  scripts/process_inbox.py
  │    3-tier transcription chain: AssemblyAI (diarized, only if key set)
  │      → WhisperX (local diarization, only if venv present) → whisper.cpp (always available)
- │    → claude -p (6-section meeting summary + speaker-name inference) | transcript-only fallback
+ │    → Claude API (6-section meeting summary + speaker-name inference)
+ │      → GPT cross-verification (fixes factual errors/omissions against the transcript)
+ │      | transcript-only fallback / verification skipped when keys are missing
  ▼
  OUTPUT_DIR/{YYMMDD}_{title}.md     (+ original audio moved to ARCHIVE_DIR)
 ```
 
 - **Three triggers**: a timer (pull) + folder watch (process) + daily 03:00 (archive pruning, opt-in). No daemons — just macOS `launchd`.
 - **Transcription is 100% local by default**: whisper.cpp + `ggml-large-v3-turbo`. No internet, no fees. Diarization is opt-in (see "Transcription engine chain").
-- **Summarization is a thin layer**: `claude -p` (headless). If missing or failing, the raw transcript is saved instead.
+- **Summarization is a thin layer**: a direct Claude API call (`ANTHROPIC_API_KEY`). If the key is
+  missing or the call fails, the raw transcript is saved instead. With `OPENAI_API_KEY` set, GPT
+  additionally cross-checks the summary against the transcript and fixes factual errors/omissions.
 - **Notes are dated by recording date**: filenames are `{YYMMDD}_{title}.md` so the file list sorts
   chronologically, and the frontmatter `created` field uses the recording date too.
 
@@ -83,7 +87,8 @@ $(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
 - [Homebrew](https://brew.sh)
 - Node.js (`brew install node`) — for the official PLAUD CLI
 - A PLAUD account + recorder
-- (Optional) [Claude Code](https://claude.com/claude-code) — for the summary step. Without it, only transcripts are saved.
+- (Optional) [Anthropic API key](https://platform.claude.com) — for the summary step. Without it, only transcripts are saved.
+- (Optional) [OpenAI API key](https://platform.openai.com) — for summary cross-verification (factual error/omission fixes).
 
 ---
 
@@ -97,7 +102,7 @@ bash install.sh
 
 What `install.sh` does:
 1. Installs brew dependencies (`whisper-cpp`, `ffmpeg`) + `@plaud-ai/cli`
-2. If `config.env` is missing, **interactively** asks for your vault path / output folder / language / AssemblyAI key (optional) and creates it
+2. If `config.env` is missing, **interactively** asks for your vault path / output folder / language / three optional API keys and creates it
 3. Downloads the whisper model (~1.5GB)
 4. Generates 3 launchd plists (pull/process/prune — pointing at this repo's location)
 
@@ -110,7 +115,9 @@ What `install.sh` does:
 # (Required) PLAUD login — browser OAuth; tokens are stored in ~/.plaud (outside the repo)
 plaud login
 
-# (Optional) For summaries, install and log in to Claude Code. Otherwise only transcripts are saved.
+# (Optional) For summaries, set ANTHROPIC_API_KEY in config.env; add OPENAI_API_KEY for
+#            cross-verification. Otherwise only transcripts are saved.
+#            launchd cannot see shell env vars, so keys must live in config.env (or key files).
 
 # Load the launchd jobs
 launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.process.plist
@@ -145,8 +152,12 @@ See `config.env.example`. `install.sh` generates it automatically; edit it any t
 | `WHISPER_MODEL` | `ggml-large-v3-turbo.bin` | whisper model filename |
 | `PULL_INTERVAL` | `900` | Pull interval in seconds |
 | `SUMMARY_PROMPT_FILE` | (built-in prompt) | Path to a custom summary prompt file |
-| `CLAUDE_MODEL` | `sonnet` | Model for `claude -p` summaries |
+| `ANTHROPIC_API_KEY` | (empty) | If set, the Claude API produces the 6-section summary ⚠️ transcript text leaves your machine |
+| `CLAUDE_MODEL` | `claude-opus-5` | Claude API summary model |
+| `OPENAI_API_KEY` | (empty) | If set, GPT cross-checks the summary against the transcript ⚠️ transcript+summary leave your machine |
+| `OPENAI_MODEL` | `gpt-5.2` | GPT cross-verification model |
 | `ASSEMBLYAI_API_KEY` | (empty) | If set, cloud transcription+diarization becomes tier 1 ⚠️ audio leaves your machine |
+| `SPEAKERS_EXPECTED` | `0` | Speaker-count hint for AssemblyAI (`2` recommended for calls). `0` = unused |
 | `HF_TOKEN` | (empty) | HuggingFace token for local WhisperX diarization |
 | `AUDIO_RETENTION_DAYS` | `0` | Days to keep archived audio. 0 = never auto-delete |
 
@@ -180,7 +191,8 @@ vault (`OUTPUT_DIR`) and reach mobile Obsidian through **whatever vault sync you
 | `plaud CLI missing` | `npm install -g @plaud-ai/cli` → `plaud login` |
 | `recording list empty / query failed` | Token expired → re-run `plaud login` |
 | `model missing` | Check that `install.sh`'s download finished (`models/*.bin`) |
-| Note has transcript only, no summary | `claude` not installed / not logged in → normal fallback. Install Claude Code for summaries. **An outdated CLI also causes this** — the summary call uses the `--tools`/`--no-session-persistence` flags, so old versions fall back silently → run `claude update` and retry (check for "claude 실패" in `logs/pipeline.log`) |
+| Note has transcript only, no summary (`status: summary_pending`) | `ANTHROPIC_API_KEY` not set → normal fallback. Set the key in config.env for summaries. If the key is set and it still falls back, check the "claude: HTTP ..." lines in `logs/pipeline.log` — 401 means a bad key; 429/529 are transient overloads (retried automatically) |
+| Note frontmatter says `verified: false` | `OPENAI_API_KEY` not set, or the GPT call failed → the Claude summary was kept as-is (expected behavior). Set the key and check the "gpt: ..." log lines for cross-verification |
 | Same recording processed twice | Multiple Macs running it → keep one, run `bash uninstall.sh` on the rest |
 | Periodic pull not running | Mac is asleep → disable sleep in System Settings |
 | Audio sits in `_inbox/_failed/` | Auto-quarantined after 3 consecutive failed transcriptions (prevents retry loops). Inspect the file, move it back to `_inbox` to retry |
@@ -206,12 +218,14 @@ To delete PLAUD tokens: `rm -rf ~/.plaud`.
 
 ## Privacy / Security
 
-- **With the default configuration, recordings, transcripts, and notes all stay on your Mac/vault.** Transcription is local Whisper; only the (optional) summary uses Claude.
+- **With the default configuration (no keys), recordings, transcripts, and notes all stay on your Mac/vault.** Transcription is local Whisper.
+- **Only if you set `ANTHROPIC_API_KEY`** is the transcript text sent to Anthropic servers for summarization.
+- **Only if you set `OPENAI_API_KEY`** are the transcript and summary sent to OpenAI servers for cross-verification.
 - **Only if you set `ASSEMBLYAI_API_KEY`** is audio sent to AssemblyAI servers for transcription.
-  Leave the key empty (default) and audio never leaves your machine. Check AssemblyAI's data
-  retention policy against your own account settings. The WhisperX tier keeps diarization 100% local too.
+  Check each service's data retention policy against your own account settings. The WhisperX tier
+  keeps diarization 100% local too.
 - The PLAUD OAuth token is stored in `~/.plaud/tokens.json` and is **never part of this repo**.
-- API keys (`config.env`, `.assemblyai_key`, `.hf_token`), logs, models, audio, and state files are all `.gitignore`d.
+- API keys (`config.env`, `.assemblyai_key`, `.anthropic_key`, `.openai_key`, `.hf_token`), logs, models, audio, and state files are all `.gitignore`d.
 
 ## Development / Tests
 

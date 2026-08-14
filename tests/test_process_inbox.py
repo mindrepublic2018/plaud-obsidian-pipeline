@@ -119,6 +119,31 @@ class TranscriptForClaudeTest(unittest.TestCase):
         self.assertEqual(t, "전사 원문")
 
 
+class BuildNoteTest(unittest.TestCase):
+    UTTS = [{"speaker": "화자 A", "text": "안녕하세요"}]
+
+    def test_summary_with_verified_frontmatter(self):
+        note = process_inbox.build_note("제목", "## 본문", self.UTTS, True,
+                                        {"A": "김대표(대표)"}, "2026-08-10",
+                                        summary_model="claude-opus-5", verified=True)
+        self.assertIn("status: active\n", note)
+        self.assertIn("summary_model: claude-opus-5\n", note)
+        self.assertIn("verified: true\n", note)
+        self.assertIn("speakers: [김대표(대표)]\n", note)
+
+    def test_summary_unverified(self):
+        note = process_inbox.build_note("제목", "## 본문", self.UTTS, True, {}, "2026-08-10",
+                                        summary_model="claude-opus-5", verified=False)
+        self.assertIn("verified: false\n", note)
+        self.assertNotIn("speakers:", note)
+
+    def test_fallback_note_has_no_summary_metadata(self):
+        note = process_inbox.build_note("음성메모", "", self.UTTS, True, {}, "2026-08-10")
+        self.assertIn("status: summary_pending\n", note)
+        self.assertNotIn("summary_model:", note)
+        self.assertNotIn("verified:", note)
+
+
 class FailCountTest(unittest.TestCase):
     def setUp(self):
         f = tempfile.NamedTemporaryFile("w", delete=False)

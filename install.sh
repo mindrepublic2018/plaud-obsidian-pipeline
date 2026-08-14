@@ -3,7 +3,7 @@
 # plaud-obsidian-pipeline — 설치 스크립트 (macOS)
 # 사용법:  bash install.sh
 #   1) brew 의존성(whisper-cpp, ffmpeg) + node + @plaud-ai/cli 설치
-#   2) config.env 없으면 대화형으로 생성 (볼트 경로/출력 폴더/언어/AssemblyAI 키)
+#   2) config.env 없으면 대화형으로 생성 (볼트 경로/출력 폴더/언어/API 키 3종)
 #   3) whisper 모델(~1.5GB) 다운로드
 #   4) launchd plist 3개 생성 (pull/process/prune — 이 레포 위치 기준)
 #   5) 사용자 직접 단계 안내(plaud login 등) → launchctl load
@@ -60,12 +60,20 @@ if [ ! -f "$CONFIG" ]; then
   echo "  AssemblyAI API 키 (선택): 넣으면 클라우드 전사+화자분리를 1순위로 사용."
   echo "  ⚠️ 키를 넣으면 오디오가 AssemblyAI 서버로 전송됩니다. 비우면 100% 로컬 전사."
   read -r -p "  AssemblyAI API 키 [없음]: " IN_AAI
+  echo "  Anthropic API 키 (선택): 넣으면 Claude API 로 6섹션 회의록 요약."
+  echo "  ⚠️ 키를 넣으면 전사 텍스트가 Anthropic 서버로 전송됩니다. 비우면 전사 원문만 저장."
+  read -r -p "  Anthropic API 키 [없음]: " IN_ANT
+  echo "  OpenAI API 키 (선택): 넣으면 GPT 가 요약을 전사와 대조해 사실오류·누락 교정."
+  echo "  ⚠️ 키를 넣으면 전사+요약이 OpenAI 서버로 전송됩니다. 비우면 검증 생략."
+  read -r -p "  OpenAI API 키 [없음]: " IN_OAI
   {
     echo "# plaud-obsidian-pipeline 설정 (install.sh 가 생성)"
     echo "VAULT_PATH=$IN_VAULT"
     echo "OUTPUT_DIR=\$VAULT_PATH/$IN_OUT"
     echo "WHISPER_LANG=$IN_LANG"
     if [ -n "$IN_AAI" ]; then echo "ASSEMBLYAI_API_KEY=$IN_AAI"; fi
+    if [ -n "$IN_ANT" ]; then echo "ANTHROPIC_API_KEY=$IN_ANT"; fi
+    if [ -n "$IN_OAI" ]; then echo "OPENAI_API_KEY=$IN_OAI"; fi
   } > "$CONFIG"
   chmod 600 "$CONFIG"
   echo "  ✓ config.env 작성 완료. (필요하면 직접 편집: $CONFIG)"
@@ -159,8 +167,10 @@ echo "============================================================"
 echo "✅ 기계 설치 완료. 이제 본인이 직접 할 대화형 단계:"
 echo "============================================================"
 echo "  (a) PLAUD 로그인 (필수):   plaud login        # 브라우저 OAuth"
-echo "  (b) Claude Code 설치+로그인 (요약용, 선택):"
+echo "  (b) 요약을 쓰려면 config.env 에 ANTHROPIC_API_KEY (선택),"
+echo "      교차검증까지 원하면 OPENAI_API_KEY (선택)를 설정하세요."
 echo "        없으면 요약을 건너뛰고 '전사 원문'만 노트에 저장됩니다."
+echo "        (launchd 는 셸 환경변수를 못 보므로 키는 config.env 또는 키파일에 둬야 합니다)"
 echo "  (c) 모바일에서 보려면: 이 볼트를 평소 쓰는 방식(Obsidian Sync 등)으로 폰과 동기화"
 echo ""
 echo "  그 다음 launchd 잡 로드:"

@@ -4,7 +4,8 @@ INBOX_DIR 음성메모 자동처리:
   INBOX_DIR/*.{m4a,mp3,wav,...}
   → 전사 3단 체인: AssemblyAI(화자분리, 키 있을 때만) → WhisperX+pyannote(로컬 화자분리,
     venv 있을 때만) → whisper.cpp(항상 가능, 화자분리 없음)
-  → claude -p(6섹션 회의록 요약 + 화자 이름 추론, 없으면 전사-only 폴백)
+  → Claude API(6섹션 회의록 요약 + 화자 이름 추론, 키 없으면 전사-only 폴백)
+  → OpenAI GPT 교차검증(전사 대비 사실오류·누락 교정, 키 없으면 생략)
   → OUTPUT_DIR/{YYMMDD}_{제목}.md (YYMMDD = 녹음일 — 파일목록이 시간순 정렬됨)
   → 원본 오디오는 ARCHIVE_DIR 로 이동
 launchd WatchPaths 가 INBOX_DIR 변경 시 호출. 동시실행 방지 락 포함.
@@ -18,13 +19,23 @@ import datetime
 import fcntl
 import shutil
 
-from _config import load, migrate_legacy_state, HOME
+from _config import load, migrate_legacy_state
 
 # AssemblyAI 전사 모듈 (같은 디렉토리). import 실패해도 로컬 폴백으로 동작해야 하므로 방어
 try:
     import assemblyai_transcribe
 except Exception:
     assemblyai_transcribe = None
+
+# 요약(Claude API)/교차검증(OpenAI) 모듈 — 둘 다 선택 기능. import 실패해도 전사는 저장돼야 하므로 방어
+try:
+    import claude_summarize
+except Exception:
+    claude_summarize = None
+try:
+    import gpt_verify
+except Exception:
+    gpt_verify = None
 
 CFG = load()
 INBOX = CFG["INBOX_DIR"]
@@ -43,10 +54,8 @@ WHISPERX_SCRIPT = CFG["WHISPERX_SCRIPT"]
 # 전사 실패가 이 횟수에 도달하면 INBOX/_failed 로 격리 (무한 재시도 방지)
 MAX_TRANSCRIBE_FAILURES = 3
 
-# 요약 호출 튜닝 — sonnet: 구조화·디테일·정확도 우위 (haiku 대비 ~2배 느리나 비동기라 무방).
-CLAUDE_MODEL = CFG.get("CLAUDE_MODEL") or "sonnet"
-CLAUDE_TIMEOUT = 180   # 6섹션 회의록 + 화자 추론으로 출력이 길어짐
-CLAUDE_RETRIES = 2     # 일시적 실패(과부하 등) 대비 총 시도 횟수
+# 요약 모델 표시용 (실제 호출 튜닝은 claude_summarize.py / gpt_verify.py 모듈 상수)
+CLAUDE_MODEL = CFG.get("CLAUDE_MODEL") or "claude-opus-5"
 
 
 # 절대경로 바이너리 (launchd 는 PATH 가 빈약함)
@@ -64,16 +73,15 @@ def which(*cands):
 FFMPEG = which("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg")
 WHISPER = which("/opt/homebrew/bin/whisper-cli", "/opt/homebrew/bin/whisper-cpp",
                 "/usr/local/bin/whisper-cli", "whisper-cli", "whisper-cpp")
-CLAUDE = which(f"{HOME}/.npm-global/bin/claude", "/opt/homebrew/bin/claude", "claude")
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".aiff", ".aif", ".aac", ".ogg", ".opus", ".webm", ".flac", ".mp4", ".m4v"}
 
-DEFAULT_PROMPT = """당신은 한국어 통화/회의 녹취를 정리하는 회의록 전문가다. 아래 STDIN으로 들어온 전사 텍스트를 보고
+DEFAULT_PROMPT = """당신은 한국어 통화/회의 녹취를 정리하는 회의록 전문가다. 사용자 메시지로 주어진 전사 텍스트를 보고
 옵시디언 노트의 '요약부'만 만든다. 전사 원문(전문)은 절대 다시 출력하지 말 것 — 시스템이 따로 첨부한다.
 전사에는 자동 화자분리 라벨(화자 A, 화자 B, 화자 ? 등)이 붙어 있을 수 있다.
 출력은 **정확히** 다음 형식만 (코드펜스 없이):
 
-TITLE: <12자 내외 간결한 한국어 제목 (날짜·확장자 없이)>
+TITLE: <12자 내외 간결한 한국어 제목 (날짜·확장자 없이). 핵심 주제 위주로, 상대방·회사명이 파악되면 포함>
 ---SPEAKERS---
 A=<이름(역할)>
 B=?
@@ -106,6 +114,9 @@ B=?
   (액션 아이템은 "- [ ] 특이 액션 없음"). 담당/기한은 전사에 명시된 경우만 표기.
 - 톤 메모 마지막의 disclaimer 인용문은 반드시 그대로 포함할 것.
 - 사실만. 전사에 없는 내용을 지어내지 말 것. 한국어로 간결하게. 전사 원문 재출력 금지.
+- 숫자·금액·날짜·고유명사는 전사에 나온 표기 그대로 사용할 것 (반올림·환산·추정 금지).
+- '결정사항'에는 명시적으로 합의된 것만. 논의만 되고 결론이 없는 항목은 '주요 논의'에 둘 것.
+- '주요 논의' 불릿은 가능하면 발화 주체(이름 또는 역할)를 밝혀 누가 무엇을 제안/주장했는지 드러낼 것.
 - 본문에서 화자를 지칭할 땐 이름이 밝혀진 경우 그 이름을, 아니면 역할 추정 표현만 사용."""
 
 
@@ -227,26 +238,6 @@ def quarantine(audio):
     return dest
 
 
-def run_claude(transcript):
-    if not CLAUDE:
-        return None
-    cmd = [CLAUDE, "-p", PROMPT, "--model", CLAUDE_MODEL,
-           "--tools", "", "--no-session-persistence"]
-    for attempt in range(1, CLAUDE_RETRIES + 1):
-        try:
-            r = subprocess.run(cmd, input=transcript,
-                               capture_output=True, text=True, errors="replace",
-                               timeout=CLAUDE_TIMEOUT)
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip()
-            log(f"claude 실패(시도 {attempt}/{CLAUDE_RETRIES}) rc={r.returncode} err={r.stderr[:200]}")
-        except Exception as e:
-            log(f"claude 예외(시도 {attempt}/{CLAUDE_RETRIES}): {e}")
-        if attempt < CLAUDE_RETRIES:
-            time.sleep(5)
-    return None
-
-
 def transcribe_assemblyai(audio):
     """AssemblyAI 전사+화자분리. utterances 반환([{speaker: '화자 A', text}]), 실패/키 없음 시 None."""
     if not assemblyai_transcribe:
@@ -361,12 +352,21 @@ def utterances_markdown(utterances, speaker_map):
     return "\n\n".join(lines)
 
 
-def build_note(title, body, utterances, diarized, speaker_map, created):
+def build_note(title, body, utterances, diarized, speaker_map, created,
+               summary_model="", verified=False):
     # created = 녹음일(YYYY-MM-DD). 녹음 파일명에서 추출, 없으면 처리일 폴백.
-    # 요약 성공 시 active, claude 폴백(요약 없음)이면 summary_pending 으로 표시
+    # 요약 성공 시 active, 요약 폴백(요약 없음)이면 summary_pending 으로 표시.
+    # summary_model/verified 는 요약이 있을 때만 frontmatter 에 기록 —
+    # verified: true = GPT 교차검증 통과(교정 반영 또는 무수정 확인).
     status = "active" if body else "summary_pending"
-    fm = (f"---\ncreated: {created}\ntags: [음성메모, 자동전사]\n"
-          f"type: voice-memo\nstatus: {status}\n---\n\n")
+    fm = f"---\ncreated: {created}\ntags: [음성메모, 자동전사]\ntype: voice-memo\nstatus: {status}\n"
+    if body and summary_model:
+        fm += f"summary_model: {summary_model}\n"
+        fm += f"verified: {'true' if verified else 'false'}\n"
+    if speaker_map:
+        names = ", ".join(speaker_map[k] for k in sorted(speaker_map))
+        fm += f"speakers: [{names}]\n"
+    fm += "---\n\n"
     h = f"# 📞 {title}\n\n"
     summary = (body + "\n\n") if body else ""
     # 전사 원문은 항상 코드가 직접 첨부 (claude 는 요약만 생성 → 출력이 전사 길이에 비례하지 않음)
@@ -399,10 +399,22 @@ def process(audio):
         return
     if name in counts:  # 성공 → 실패 기록 정리
         save_fail_counts(FAIL_PATH, {k: v for k, v in counts.items() if k != name})
-    out = run_claude(transcript_for_claude(utterances, diarized))
+    transcript = transcript_for_claude(utterances, diarized)
+    out = claude_summarize.summarize(transcript, PROMPT, log=log) if claude_summarize else None
     title, speaker_map, body = parse_claude_output(out)
+    verified = False
+    if body and gpt_verify:
+        corrected = gpt_verify.verify(transcript, out, log=log)
+        if corrected:
+            t2, s2, b2 = parse_claude_output(corrected)
+            if b2:
+                title, speaker_map, body = t2, s2, b2
+                verified = True
+                log("  ✓ GPT 교차검증 반영")
+            else:
+                log("  ⚠️ GPT 출력 형식 불일치 — Claude 요약 유지")
     if not body:
-        log("  claude 요약 없음 — 전사만 저장(폴백)")
+        log("  요약 없음 — 전사만 저장(폴백)")
     rec = record_date(audio)               # 녹음일 (파일명 기준, 없으면 처리일)
     rec6 = rec.strftime("%y%m%d")
     rec_iso = rec.strftime("%Y-%m-%d")
@@ -414,7 +426,8 @@ def process(audio):
         fpath = os.path.join(OUTDIR, f"{rec6}_{slugify(title)}_{n}.md")
         n += 1
     with open(fpath, "w", encoding="utf-8") as f:
-        f.write(build_note(title, body, utterances, diarized, speaker_map, rec_iso))
+        f.write(build_note(title, body, utterances, diarized, speaker_map, rec_iso,
+                           summary_model=CLAUDE_MODEL if body else "", verified=verified))
     log(f"  ✓ 노트 생성: {os.path.basename(fpath)}")
     # 오디오 아카이브
     os.makedirs(ARCHIVE, exist_ok=True)

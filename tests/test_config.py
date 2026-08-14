@@ -89,14 +89,21 @@ class LoadTest(unittest.TestCase):
     def test_optional_feature_defaults_are_off(self):
         cfg = self._load_with("VAULT_PATH=/v\n")
         self.assertEqual(cfg["ASSEMBLYAI_API_KEY"], "")
+        self.assertEqual(cfg["SPEAKERS_EXPECTED"], "0")
         self.assertEqual(cfg["HF_TOKEN"], "")
-        self.assertEqual(cfg["CLAUDE_MODEL"], "sonnet")
+        self.assertEqual(cfg["ANTHROPIC_API_KEY"], "")
+        self.assertEqual(cfg["CLAUDE_MODEL"], "claude-opus-5")
+        self.assertEqual(cfg["OPENAI_API_KEY"], "")
+        self.assertEqual(cfg["OPENAI_MODEL"], "gpt-5.2")
         self.assertEqual(cfg["AUDIO_RETENTION_DAYS"], "0")
 
     def test_optional_paths_live_under_repo_root(self):
         cfg = self._load_with("VAULT_PATH=/v\n")
         self.assertEqual(cfg["AAI_KEY_PATH"], os.path.join(_config.REPO_ROOT, ".assemblyai_key"))
         self.assertEqual(cfg["HF_TOKEN_PATH"], os.path.join(_config.REPO_ROOT, ".hf_token"))
+        self.assertEqual(cfg["ANTHROPIC_KEY_PATH"],
+                         os.path.join(_config.REPO_ROOT, ".anthropic_key"))
+        self.assertEqual(cfg["OPENAI_KEY_PATH"], os.path.join(_config.REPO_ROOT, ".openai_key"))
         self.assertEqual(cfg["WHISPERX_PY"],
                          os.path.join(_config.REPO_ROOT, ".venv-whisperx", "bin", "python"))
         self.assertEqual(cfg["WHISPERX_SCRIPT"],

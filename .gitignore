@@ -2,6 +2,8 @@
 config.env
 .assemblyai_key
 .hf_token
+.anthropic_key
+.openai_key
 
 # WhisperX 전용 venv (선택 기능, 로컬 생성)
 .venv-whisperx/

@@ -74,12 +74,22 @@ def transcribe(audio_path, log=print):
                        body=f, content_length=size, timeout=UPLOAD_TIMEOUT)
         upload_url = up["upload_url"]
 
-        payload = json.dumps({
+        body = {
             "audio_url": upload_url,
             "language_code": CFG.get("WHISPER_LANG") or "ko",
             "speaker_labels": True,
             "speech_models": SPEECH_MODELS,
-        }).encode("utf-8")
+            "disfluencies": False,   # 간투사("어", "음") 제거 → 요약 입력 품질 향상
+            "punctuate": True,       # 기본값이지만 명시 (자기문서화)
+            "format_text": True,
+        }
+        try:
+            n = int(CFG.get("SPEAKERS_EXPECTED") or 0)
+        except ValueError:
+            n = 0
+        if n > 0:
+            body["speakers_expected"] = n  # 화자 수 힌트 → 화자분리 정확도 향상 (통화는 2 권장)
+        payload = json.dumps(body).encode("utf-8")
         tid = _http("POST", f"{API_BASE}/transcript", key, body=payload)["id"]
 
         deadline = time.time() + POLL_TIMEOUT
