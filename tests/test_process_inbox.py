@@ -129,7 +129,7 @@ class BuildNoteTest(unittest.TestCase):
         self.assertIn("status: active\n", note)
         self.assertIn("summary_model: claude-opus-5\n", note)
         self.assertIn("verified: true\n", note)
-        self.assertIn("speakers: [김대표(대표)]\n", note)
+        self.assertIn('speakers: ["김대표(대표)"]\n', note)
 
     def test_summary_unverified(self):
         note = process_inbox.build_note("제목", "## 본문", self.UTTS, True, {}, "2026-08-10",
@@ -172,6 +172,53 @@ class FailCountTest(unittest.TestCase):
         with open(self.path, "w", encoding="utf-8") as f:
             f.write("a.mp3\t2\nbroken line\nb.mp3\tNaN\n")
         self.assertEqual(process_inbox.load_fail_counts(self.path), {"a.mp3": 2})
+
+
+class ProcessedNotesTest(unittest.TestCase):
+    def setUp(self):
+        f = tempfile.NamedTemporaryFile("w", delete=False)
+        f.close()
+        self.path = f.name
+        self.addCleanup(os.remove, self.path)
+
+    def test_round_trip(self):
+        process_inbox.save_processed(self.path, {"a.mp3": "250817_회의.md", "b.m4a": "250817_통화.md"})
+        self.assertEqual(process_inbox.load_processed(self.path),
+                         {"a.mp3": "250817_회의.md", "b.m4a": "250817_통화.md"})
+
+    def test_load_skips_malformed_lines(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("a.mp3\tnote.md\nbroken line\n\tno-name.md\nno-note\t\n")
+        self.assertEqual(process_inbox.load_processed(self.path), {"a.mp3": "note.md"})
+
+    def test_missing_file_returns_empty(self):
+        self.assertEqual(process_inbox.load_processed("/nonexistent/processed.txt"), {})
+
+    def test_save_overwrites_previous_content(self):
+        process_inbox.save_processed(self.path, {"a.mp3": "x.md"})
+        process_inbox.save_processed(self.path, {"b.mp3": "y.md"})
+        self.assertEqual(process_inbox.load_processed(self.path), {"b.mp3": "y.md"})
+
+
+class YamlQuoteTest(unittest.TestCase):
+    def test_plain_name_is_quoted(self):
+        self.assertEqual(process_inbox.yaml_quote("김대표(대표)"), '"김대표(대표)"')
+
+    def test_double_quote_is_escaped(self):
+        self.assertEqual(process_inbox.yaml_quote('a"b'), '"a\\"b"')
+
+    def test_backslash_is_escaped(self):
+        self.assertEqual(process_inbox.yaml_quote("a\\b"), '"a\\\\b"')
+
+    def test_bracket_and_colon_stay_inside_quotes(self):
+        # LLM 이 만든 이름의 ] : 가 frontmatter 리스트를 못 깨는지
+        self.assertEqual(process_inbox.yaml_quote("x] evil: y"), '"x] evil: y"')
+
+    def test_build_note_speakers_line_is_quoted(self):
+        note = process_inbox.build_note(
+            "t", "body", [{"speaker": "화자 A", "text": "hi"}], True,
+            {"A": 'k"s'}, "2026-08-17", summary_model="m")
+        self.assertIn('speakers: ["k\\"s"]\n', note)
 
 
 if __name__ == "__main__":

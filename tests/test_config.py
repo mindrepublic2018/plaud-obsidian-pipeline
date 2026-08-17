@@ -110,5 +110,43 @@ class LoadTest(unittest.TestCase):
                          os.path.join(_config.REPO_ROOT, "scripts", "whisperx_transcribe.py"))
 
 
+class SecretMaskTest(unittest.TestCase):
+    def test_is_secret_key_matches_key_and_token(self):
+        for k in ("ASSEMBLYAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"):
+            self.assertTrue(_config.is_secret_key(k), k)
+
+    def test_is_secret_key_ignores_paths_and_normal_keys(self):
+        for k in ("AAI_KEY_PATH", "VAULT_PATH", "INBOX_DIR", "CLAUDE_MODEL", "WHISPER_LANG"):
+            self.assertFalse(_config.is_secret_key(k), k)
+
+    def test_mask_secrets_hides_set_values(self):
+        cfg = {"ANTHROPIC_API_KEY": "sk-real", "HF_TOKEN": "hf_real", "VAULT_PATH": "/v"}
+        masked = _config.mask_secrets(cfg)
+        self.assertEqual(masked["ANTHROPIC_API_KEY"], "***")
+        self.assertEqual(masked["HF_TOKEN"], "***")
+        self.assertEqual(masked["VAULT_PATH"], "/v")
+
+    def test_mask_secrets_keeps_empty_values_empty(self):
+        # 빈 값은 빈 값 그대로 — "설정 안 됨" 판별이 가능해야 함
+        masked = _config.mask_secrets({"OPENAI_API_KEY": ""})
+        self.assertEqual(masked["OPENAI_API_KEY"], "")
+
+    def test_mask_secrets_does_not_mutate_original(self):
+        cfg = {"OPENAI_API_KEY": "sk-real"}
+        _config.mask_secrets(cfg)
+        self.assertEqual(cfg["OPENAI_API_KEY"], "sk-real")
+
+
+class ModelPathGuardTest(LoadTest):
+    def test_whisper_model_traversal_is_neutralized(self):
+        cfg = self._load_with("VAULT_PATH=/v\nWHISPER_MODEL=../../etc/evil.bin\n")
+        self.assertEqual(cfg["MODEL_PATH"],
+                         os.path.join(_config.REPO_ROOT, "models", "evil.bin"))
+
+    def test_tmp_dir_under_state(self):
+        cfg = self._load_with("VAULT_PATH=/v\n")
+        self.assertEqual(cfg["TMP_DIR"], os.path.join(_config.REPO_ROOT, "state", "tmp"))
+
+
 if __name__ == "__main__":
     unittest.main()

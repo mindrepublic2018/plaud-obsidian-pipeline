@@ -18,8 +18,9 @@ import time
 import datetime
 import fcntl
 import shutil
+import tempfile
 
-from _config import load, migrate_legacy_state
+from _config import load, migrate_legacy_state, ensure_private_dir
 
 # AssemblyAI 전사 모듈 (같은 디렉토리). import 실패해도 로컬 폴백으로 동작해야 하므로 방어
 try:
@@ -45,6 +46,8 @@ MODEL = CFG["MODEL_PATH"]
 LOGDIR = CFG["LOG_DIR"]
 LOCK = CFG["LOCK_PATH"]
 FAIL_PATH = CFG["FAIL_PATH"]
+TMPDIR = CFG["TMP_DIR"]          # 0700 임시 디렉터리 — 변환 wav·전사 txt 를 /tmp 에 노출하지 않음
+PROCESSED_PATH = CFG["PROCESSED_PATH"]
 LANG = CFG["WHISPER_LANG"] or "ko"
 PROMPT_FILE = CFG.get("SUMMARY_PROMPT_FILE", "")
 # WhisperX(전사+화자분리) — 별도 venv 에서 실행 (없으면 이 티어는 건너뜀)
@@ -229,6 +232,41 @@ def bump_fail(counts, name):
     return bumped
 
 
+def load_processed(path):
+    """노트 생성은 끝났지만 아카이브 이동이 실패한 기록(오디오이름<TAB>노트파일명) 로드. 깨진 줄 무시."""
+    d = {}
+    if not os.path.isfile(path):
+        return d
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            parts = ln.rstrip("\n").split("\t")
+            if len(parts) == 2 and parts[0] and parts[1]:
+                d[parts[0]] = parts[1]
+    return d
+
+
+def save_processed(path, d):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for name, note in sorted(d.items()):
+            f.write(f"{name}\t{note}\n")
+    os.replace(tmp, path)
+
+
+def archive_audio(audio):
+    """오디오를 ARCHIVE_DIR 로 이동. 성공 시 True (실패해도 예외 안 던짐 — 노트는 이미 안전)."""
+    os.makedirs(ARCHIVE, exist_ok=True)
+    arc = os.path.join(ARCHIVE, f"{datetime.date.today().strftime('%y%m%d')}_{os.path.basename(audio)}")
+    try:
+        shutil.move(audio, arc)
+        log(f"  ✓ 오디오 아카이브: {os.path.basename(arc)}")
+        return True
+    except Exception as e:
+        log(f"  ⚠️ 아카이브 실패({e}) — 원본 유지, 다음 실행에서 이동만 재시도")
+        return False
+
+
 def quarantine(audio):
     """반복 실패한 오디오를 INBOX/_failed 로 이동해 재시도 루프에서 제외."""
     failed_dir = os.path.join(INBOX, "_failed")
@@ -285,8 +323,10 @@ def parse_whisperx_lines(text):
 
 
 def transcribe_whispercpp(audio):
-    base = os.path.splitext(os.path.basename(audio))[0]
-    wav = f"/tmp/voicememo_{base}_{int(time.time())}.wav"
+    # state/tmp(0700) + mkstemp(0600) — 변환 wav 와 전사 txt(전문) 모두 이 안에서만 생성
+    ensure_private_dir(TMPDIR)
+    fd, wav = tempfile.mkstemp(prefix="voicememo_", suffix=".wav", dir=TMPDIR)
+    os.close(fd)
     # 16k mono wav (whisper.cpp 요구)
     r = subprocess.run([FFMPEG, "-y", "-i", audio, "-ar", "16000", "-ac", "1", wav],
                        capture_output=True, text=True, errors="replace")
@@ -352,6 +392,12 @@ def utterances_markdown(utterances, speaker_map):
     return "\n\n".join(lines)
 
 
+def yaml_quote(name):
+    """frontmatter 값 안전화 — LLM 이 만든 화자 이름을 큰따옴표 스칼라로 (\\ 와 " 이스케이프).
+    화자 이름은 라인 단위 regex 로 파싱돼 개행은 못 들어오지만, ] : " 등이 YAML 을 깰 수 있다."""
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def build_note(title, body, utterances, diarized, speaker_map, created,
                summary_model="", verified=False):
     # created = 녹음일(YYYY-MM-DD). 녹음 파일명에서 추출, 없으면 처리일 폴백.
@@ -364,7 +410,7 @@ def build_note(title, body, utterances, diarized, speaker_map, created,
         fm += f"summary_model: {summary_model}\n"
         fm += f"verified: {'true' if verified else 'false'}\n"
     if speaker_map:
-        names = ", ".join(speaker_map[k] for k in sorted(speaker_map))
+        names = ", ".join(yaml_quote(speaker_map[k]) for k in sorted(speaker_map))
         fm += f"speakers: [{names}]\n"
     fm += "---\n\n"
     h = f"# 📞 {title}\n\n"
@@ -383,6 +429,15 @@ def process(audio):
     log(f"처리 시작: {name}")
     if not stable(audio):
         log(f"  파일 불안정/빈파일 — 건너뜀(다음 트리거에 재시도): {name}")
+        return
+    # 이전 실행에서 노트까지 만들고 아카이브 이동만 실패한 파일 — 재전사·재요약(API 비용) 없이 이동만 재시도
+    processed = load_processed(PROCESSED_PATH)
+    prev_note = processed.get(name)
+    if prev_note and os.path.isfile(os.path.join(OUTDIR, prev_note)):
+        log(f"  노트 이미 생성됨({prev_note}) — 아카이브 이동만 재시도")
+        if archive_audio(audio):
+            processed.pop(name, None)
+            save_processed(PROCESSED_PATH, processed)
         return
     utterances, diarized = transcribe(audio)
     counts = load_fail_counts(FAIL_PATH)
@@ -425,18 +480,19 @@ def process(audio):
     while os.path.exists(fpath):
         fpath = os.path.join(OUTDIR, f"{rec6}_{slugify(title)}_{n}.md")
         n += 1
-    with open(fpath, "w", encoding="utf-8") as f:
+    # 원자적 작성 — 볼트 동기화가 쓰다 만 노트를 집어가지 않도록 숨김 임시파일 후 replace
+    tmp_note = os.path.join(OUTDIR, "." + os.path.basename(fpath) + ".tmp")
+    with open(tmp_note, "w", encoding="utf-8") as f:
         f.write(build_note(title, body, utterances, diarized, speaker_map, rec_iso,
                            summary_model=CLAUDE_MODEL if body else "", verified=verified))
+    os.replace(tmp_note, fpath)
     log(f"  ✓ 노트 생성: {os.path.basename(fpath)}")
-    # 오디오 아카이브
-    os.makedirs(ARCHIVE, exist_ok=True)
-    arc = os.path.join(ARCHIVE, f"{datetime.date.today().strftime('%y%m%d')}_{name}")
-    try:
-        shutil.move(audio, arc)
-        log(f"  ✓ 오디오 아카이브: {os.path.basename(arc)}")
-    except Exception as e:
-        log(f"  ⚠️ 아카이브 실패({e}) — 원본 유지")
+    # 노트 완료를 먼저 기록 → 아카이브 이동이 실패해도 다음 실행에서 재전사하지 않음
+    processed[name] = os.path.basename(fpath)
+    save_processed(PROCESSED_PATH, processed)
+    if archive_audio(audio):
+        processed.pop(name, None)
+        save_processed(PROCESSED_PATH, processed)
 
 
 def main():
@@ -461,8 +517,13 @@ def main():
     try:
         if not os.path.isdir(INBOX):
             os.makedirs(INBOX, exist_ok=True)
-        files = [os.path.join(INBOX, f) for f in sorted(os.listdir(INBOX))
-                 if os.path.splitext(f)[1].lower() in AUDIO_EXT]
+        entries = [f for f in sorted(os.listdir(INBOX))
+                   if os.path.splitext(f)[1].lower() in AUDIO_EXT]
+        # 심링크 거부 — inbox 에 링크를 떨궈 임의 파일을 전사·업로드시키는 경로 차단
+        links = [f for f in entries if os.path.islink(os.path.join(INBOX, f))]
+        for f in links:
+            log(f"심링크 무시(보안): {f}")
+        files = [os.path.join(INBOX, f) for f in entries if f not in links]
         if not files:
             return
         log(f"대기 오디오 {len(files)}개")

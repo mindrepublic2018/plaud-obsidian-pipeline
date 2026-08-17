@@ -1,5 +1,9 @@
 # 사용자별 설정 (시크릿/개인 경로 포함) — 절대 커밋 금지
 config.env
+# 백업·사본까지 차단 (config.env.bak / .save / .local ...) — 예제 파일만 예외
+config.env.*
+!config.env.example
+.env
 .assemblyai_key
 .hf_token
 .anthropic_key
@@ -22,13 +26,19 @@ logs/
 models/
 *.bin
 
-# 오디오 (개인 녹음)
+# 오디오 (개인 녹음) — process_inbox.py 의 AUDIO_EXT 전체와 일치
 *.mp3
 *.m4a
 *.wav
 *.aac
 *.opus
 *.flac
+*.aiff
+*.aif
+*.ogg
+*.webm
+*.mp4
+*.m4v
 
 # OS / 에디터
 .DS_Store

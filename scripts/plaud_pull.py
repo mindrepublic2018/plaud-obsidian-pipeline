@@ -14,11 +14,14 @@ import subprocess
 import datetime
 import fcntl
 import shutil
+import tempfile
+from urllib.parse import urlsplit
 
-from _config import load, migrate_legacy_state, HOME
+from _config import load, migrate_legacy_state, ensure_private_dir, HOME
 
 CFG = load()
 INBOX = CFG["INBOX_DIR"]
+TMPDIR = CFG["TMP_DIR"]          # 0700 임시 디렉터리 (/tmp 는 타 계정이 읽을 수 있어 안 씀)
 STATE = CFG["STATE_PATH"]        # 이미 받은 id (dedup)
 SKIP = CFG["SKIP_PATH"]          # 재시도 한도 초과 등 영구 스킵
 PENDING = CFG["PENDING_PATH"]    # audio 미준비 → 재시도 대기 (id<TAB>시도횟수)
@@ -158,14 +161,31 @@ def get_audio_url(fid):
     return None
 
 
+# PLAUD 오디오가 내려오는 예상 스토리지 호스트. 벗어나도 차단하지 않고 경고만 남긴다
+# (warn-only — PLAUD 가 스토리지를 바꿔도 파이프라인이 멈추지 않게).
+ALLOWED_HOST_SUFFIXES = (".amazonaws.com", ".cloudfront.net")
+
+
+def unexpected_host(url):
+    """URL 호스트가 예상 스토리지(S3/CloudFront)가 아니면 True. 파싱 불가도 True."""
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return True
+    return not host.endswith(ALLOWED_HOST_SUFFIXES)
+
+
 def download(url, dest):
-    r = subprocess.run([CURL, "-fSL", "--retry", "2", "-o", dest, url],
+    # --proto =https: 리다이렉트 포함 https 만 허용 / --max-filesize: 디스크 소진 방지
+    r = subprocess.run([CURL, "-fSL", "--proto", "=https", "--max-filesize", "2G",
+                        "--retry", "2", "-o", dest, url],
                        capture_output=True, text=True, timeout=600)
     return r.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 1000
 
 
 def pull_new():
     os.makedirs(INBOX, exist_ok=True)
+    ensure_private_dir(TMPDIR)
     pulled, skipped = load_set(STATE), load_set(SKIP)
     pending = load_pending(PENDING)
     files = list_all_files()
@@ -187,7 +207,12 @@ def pull_new():
                 pending[fid] = n
                 log(f"  audio 미준비 — 재시도 예정({n}/{MAX_PENDING_ATTEMPTS}): {fid}")
             continue
-        tmp = f"/tmp/plaud_{fid}.mp3"
+        if unexpected_host(url):
+            # URL 전체는 서명 쿼리가 있어 로그에 안 남김 — 호스트만
+            log(f"  경고: 예상 밖 다운로드 호스트({urlsplit(url).hostname}) — 계속 진행(공식 CLI 신뢰)")
+        # state/tmp(0700) + mkstemp(0600) — 예측 불가 이름, 타 계정 접근 차단
+        fd, tmp = tempfile.mkstemp(prefix=f"plaud_{fid[:8]}_", suffix=".mp3", dir=TMPDIR)
+        os.close(fd)
         if not download(url, tmp):
             log(f"  다운로드 실패(다음 실행 재시도): {fid}")
             try:

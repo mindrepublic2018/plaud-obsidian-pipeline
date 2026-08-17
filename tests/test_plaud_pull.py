@@ -70,5 +70,20 @@ class PendingStateTest(unittest.TestCase):
         self.assertEqual(plaud_pull.load_pending(self.path), {FID2: 3})
 
 
+class UnexpectedHostTest(unittest.TestCase):
+    def test_s3_and_cloudfront_are_expected(self):
+        self.assertFalse(plaud_pull.unexpected_host(
+            "https://bucket.s3.ap-northeast-2.amazonaws.com/a.mp3?sig=x"))
+        self.assertFalse(plaud_pull.unexpected_host("https://d111.cloudfront.net/a.mp3"))
+
+    def test_other_hosts_are_unexpected(self):
+        self.assertTrue(plaud_pull.unexpected_host("https://evil.example.com/a.mp3"))
+        # 서브도메인 위장 (amazonaws.com.evil.com) 도 잡혀야 함
+        self.assertTrue(plaud_pull.unexpected_host("https://x.amazonaws.com.evil.com/a.mp3"))
+
+    def test_unparsable_url_is_unexpected(self):
+        self.assertTrue(plaud_pull.unexpected_host("https://["))
+
+
 if __name__ == "__main__":
     unittest.main()

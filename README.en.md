@@ -72,7 +72,7 @@ brew install python@3.11
 
 # From the repo root, create the venv and install whisperx
 $(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
-.venv-whisperx/bin/pip install whisperx
+.venv-whisperx/bin/pip install whisperx   # pin a known-good version for reproducibility/supply-chain safety: pip install "whisperx==<version>"
 ```
 
 1. Create a [HuggingFace token](https://huggingface.co/settings/tokens) and set `HF_TOKEN=hf_...` in `config.env`
@@ -145,7 +145,7 @@ See `config.env.example`. `install.sh` generates it automatically; edit it any t
 | Key | Default | Description |
 |---|---|---|
 | `VAULT_PATH` | (required) | Obsidian vault root path |
-| `INBOX_DIR` | `$VAULT_PATH/_inbox` | Where audio lands (watched by launchd) |
+| `INBOX_DIR` | `$VAULT_PATH/_inbox` | Where audio lands (watched by launchd). ⚠️ If this is inside your vault, unprocessed audio gets uploaded by vault sync (Obsidian Sync etc.) — a path outside the vault like `~/Obsidian/_inbox` is recommended (re-run `install.sh` after changing) |
 | `OUTPUT_DIR` | `$VAULT_PATH/Voice Memos` | Where generated notes go |
 | `ARCHIVE_DIR` | `$HOME/Obsidian/_audio-archive` | Where original audio is kept after processing |
 | `WHISPER_LANG` | `ko` | Transcription language (en/ja/...) |
@@ -162,7 +162,9 @@ See `config.env.example`. `install.sh` generates it automatically; edit it any t
 | `AUDIO_RETENTION_DAYS` | `0` | Days to keep archived audio. 0 = never auto-delete |
 
 Values may use `~`, `$HOME`, and `$VAULT_PATH`.
-Check that your config resolves correctly: `python3 scripts/_config.py`.
+Check that your config resolves correctly: `python3 scripts/_config.py` (API keys are masked as `***`).
+`config.env` contains API keys — **keep its file mode at 600**. `install.sh` enforces this on
+create and re-run, but some editors reset it to 644 on save (the scripts warn on stderr if so).
 
 > The built-in summary prompt is written in Korean and produces a six-section meeting note
 > (agenda / key discussion / decisions / action items / next steps / overall tone memo).
@@ -192,7 +194,7 @@ vault (`OUTPUT_DIR`) and reach mobile Obsidian through **whatever vault sync you
 | `recording list empty / query failed` | Token expired → re-run `plaud login` |
 | `model missing` | Check that `install.sh`'s download finished (`models/*.bin`) |
 | Note has transcript only, no summary (`status: summary_pending`) | `ANTHROPIC_API_KEY` not set → normal fallback. Set the key in config.env for summaries. If the key is set and it still falls back, check the "claude: HTTP ..." lines in `logs/pipeline.log` — 401 means a bad key; 429/529 are transient overloads (retried automatically) |
-| Note frontmatter says `verified: false` | `OPENAI_API_KEY` not set, or the GPT call failed → the Claude summary was kept as-is (expected behavior). Set the key and check the "gpt: ..." log lines for cross-verification |
+| Note frontmatter says `verified: false` | `OPENAI_API_KEY` not set, or the GPT call failed → the Claude summary was kept as-is (expected behavior). Set the key and check the "gpt: ..." log lines for cross-verification. Note: `verified: true` means "the GPT cross-check pass completed" — it is **not a guarantee of factual accuracy**; verify important decisions/numbers against the transcript |
 | Same recording processed twice | Multiple Macs running it → keep one, run `bash uninstall.sh` on the rest |
 | Periodic pull not running | Mac is asleep → disable sleep in System Settings |
 | Audio sits in `_inbox/_failed/` | Auto-quarantined after 3 consecutive failed transcriptions (prevents retry loops). Inspect the file, move it back to `_inbox` to retry |
@@ -225,7 +227,12 @@ To delete PLAUD tokens: `rm -rf ~/.plaud`.
   Check each service's data retention policy against your own account settings. The WhisperX tier
   keeps diarization 100% local too.
 - The PLAUD OAuth token is stored in `~/.plaud/tokens.json` and is **never part of this repo**.
-- API keys (`config.env`, `.assemblyai_key`, `.anthropic_key`, `.openai_key`, `.hf_token`), logs, models, audio, and state files are all `.gitignore`d.
+- API keys (`config.env`, `.assemblyai_key`, `.anthropic_key`, `.openai_key`, `.hf_token`), logs, models, audio, and state files are all `.gitignore`d (including backup copies like `config.env.bak` and every audio extension the pipeline processes).
+- Keep `config.env` at mode 600 (see Configuration above). `python3 scripts/_config.py` masks keys as `***`.
+- Temporary files during processing (downloaded audio, converted wav, transcript txt) are created under
+  the repo's `state/tmp/` (mode 700) with unpredictable names — not in world-readable `/tmp`.
+- If `INBOX_DIR` is inside your vault (the default), unprocessed audio may be copied to the cloud by
+  vault sync. Point it outside the vault if you don't want that.
 
 ## Development / Tests
 

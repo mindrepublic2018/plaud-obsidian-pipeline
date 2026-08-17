@@ -12,8 +12,13 @@ PLAUD 녹음을 **구독 없이(기기값만)** 빼와 전사(기본 로컬 whis
 - 전사 3단 체인: AssemblyAI(화자분리, `ASSEMBLYAI_API_KEY` 있을 때만) → WhisperX(로컬 화자분리, `.venv-whisperx` 있을 때만) → whisper.cpp(항상 가능). 아무 설정 없으면 100% 로컬.
 - 요약: Claude API(`ANTHROPIC_API_KEY` 있으면) 6섹션 회의록 + 화자 이름 추론 / 없으면 전사 원문만 저장.
   `OPENAI_API_KEY` 까지 있으면 GPT 가 전사 대비 요약을 교차검증(사실오류·누락 교정, frontmatter `verified: true`).
+  `verified: true` 는 교차검증 처리 완료 표시일 뿐 사실성 보증이 아님 — 중요 내용은 전문 대조 안내.
 - 노트 파일명 `{YYMMDD}_{제목}.md` (YYMMDD = 녹음일 → 시간순 정렬).
-- 설정: 레포 루트 `config.env` (`scripts/_config.py` 가 해석).
+- 설정: 레포 루트 `config.env` (`scripts/_config.py` 가 해석. 덤프 시 API 키는 `***` 마스킹,
+  비밀 키는 `--get` 으로도 원문을 내주지 않음). **퍼미션 600 유지** — install.sh 가 생성·재실행 시
+  조이고, 644 로 풀리면 스크립트가 stderr 로 경고한다.
+- `INBOX_DIR` 이 볼트 안(기본값)이면 처리 전 오디오가 볼트 동기화로 클라우드에 올라간다.
+  원치 않으면 볼트 밖(예: `~/Obsidian/_inbox`)으로 설정 + `install.sh` 재실행(WatchPaths 재생성).
 - macOS 전용. 모바일은 볼트 동기화(Obsidian Sync 등)로 노트만 따라오는 뷰어.
 
 ## 설치 절차 (이 순서대로 진행)

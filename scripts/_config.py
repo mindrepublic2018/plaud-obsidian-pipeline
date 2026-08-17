@@ -9,6 +9,8 @@ CLI:
   python3 scripts/_config.py --get KEY  # 특정 키의 해석된 값만 출력 (install.sh 용)
 """
 import os
+import stat
+import sys
 import shutil
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +62,33 @@ def _parse_file(path):
     return vals
 
 
+def is_secret_key(name):
+    """비밀값 키 이름 판별 (*_KEY / *_TOKEN). CLI 출력 마스킹·--get 거부에 사용."""
+    return name.endswith("_KEY") or name.endswith("_TOKEN")
+
+
+def mask_secrets(cfg):
+    """비밀값이 설정돼 있으면 '***' 로 가린 사본 반환. 빈 값은 그대로(미설정 판별용)."""
+    return {k: ("***" if is_secret_key(k) and v else v) for k, v in cfg.items()}
+
+
+def ensure_private_dir(path):
+    """0700 디렉터리 보장 (녹음 임시파일용 — /tmp 대신). 이미 있어도 퍼미션을 다시 조인다."""
+    os.makedirs(path, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def _warn_insecure_mode(path):
+    """시크릿 파일이 group/other 에 열려 있으면 stderr 로 경고 (stdout 은 --get 소비자가 파싱)."""
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        return
+    if mode & 0o077:
+        print(f"경고: {path} 퍼미션이 {oct(mode)} — 'chmod 600 {path}' 권장 (API 키 노출 위험)",
+              file=sys.stderr)
+
+
 def _expand(value, extra=None):
     """~, $HOME, $VAULT_PATH 등을 해석. extra={'VAULT_PATH': ...} 우선 치환."""
     if not value:
@@ -91,15 +120,19 @@ def load():
 
     # 레포 안에 두는 런타임 경로 (전부 .gitignore 대상)
     cfg["REPO_ROOT"] = REPO_ROOT
-    cfg["MODEL_PATH"] = os.path.join(REPO_ROOT, "models", cfg["WHISPER_MODEL"])
+    # basename 강제 — WHISPER_MODEL 에 '../' 등이 와도 models/ 밖으로 못 나감
+    cfg["MODEL_PATH"] = os.path.join(REPO_ROOT, "models", os.path.basename(cfg["WHISPER_MODEL"]))
     cfg["LOG_DIR"] = os.path.join(REPO_ROOT, "logs")
     cfg["STATE_DIR"] = STATE_DIR
+    cfg["TMP_DIR"] = os.path.join(STATE_DIR, "tmp")   # 임시파일 (0700, /tmp 대신)
     cfg["STATE_PATH"] = os.path.join(STATE_DIR, "pulled_ids.txt")
     cfg["SKIP_PATH"] = os.path.join(STATE_DIR, "skipped_ids.txt")
     cfg["LOCK_PATH"] = os.path.join(STATE_DIR, ".lock")
     cfg["PULL_LOCK_PATH"] = os.path.join(STATE_DIR, ".pull.lock")
     cfg["FAIL_PATH"] = os.path.join(STATE_DIR, "transcribe_failures.txt")
     cfg["PENDING_PATH"] = os.path.join(STATE_DIR, "pending_ids.txt")
+    # 노트는 만들었지만 아카이브 이동이 실패한 오디오 (재전사 없이 이동만 재시도 — 중복 노트·API 비용 방지)
+    cfg["PROCESSED_PATH"] = os.path.join(STATE_DIR, "processed_notes.txt")
     # 선택 기능(클라우드 전사/화자분리)용 키 파일·경로 — config.env 값이 우선
     cfg["AAI_KEY_PATH"] = os.path.join(REPO_ROOT, ".assemblyai_key")
     cfg["HF_TOKEN_PATH"] = os.path.join(REPO_ROOT, ".hf_token")
@@ -107,6 +140,11 @@ def load():
     cfg["OPENAI_KEY_PATH"] = os.path.join(REPO_ROOT, ".openai_key")
     cfg["WHISPERX_PY"] = os.path.join(REPO_ROOT, ".venv-whisperx", "bin", "python")
     cfg["WHISPERX_SCRIPT"] = os.path.join(REPO_ROOT, "scripts", "whisperx_transcribe.py")
+    # 시크릿 파일 퍼미션 점검 (존재하는 것만, stderr 경고)
+    for p in (CONFIG_PATH, cfg["AAI_KEY_PATH"], cfg["HF_TOKEN_PATH"],
+              cfg["ANTHROPIC_KEY_PATH"], cfg["OPENAI_KEY_PATH"]):
+        if os.path.isfile(p):
+            _warn_insecure_mode(p)
     return cfg
 
 
@@ -121,13 +159,15 @@ def migrate_legacy_state():
 
 
 if __name__ == "__main__":
-    import sys
     import json
 
     conf = load()
     if len(sys.argv) >= 3 and sys.argv[1] == "--get":
-        print(conf.get(sys.argv[2], ""))
+        # 비밀 키는 --get 으로도 원문을 내주지 않는다 (터미널 스크롤·로그 유출 방지)
+        key = sys.argv[2]
+        val = conf.get(key, "")
+        print("***" if is_secret_key(key) and val else val)
     elif len(sys.argv) >= 2 and sys.argv[1] == "--json":
-        print(json.dumps(conf, ensure_ascii=False))
+        print(json.dumps(mask_secrets(conf), ensure_ascii=False))
     else:
-        print(json.dumps(conf, ensure_ascii=False, indent=2))
+        print(json.dumps(mask_secrets(conf), ensure_ascii=False, indent=2))

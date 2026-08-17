@@ -1,7 +1,12 @@
 # plaud-obsidian-pipeline — 설계 스펙
 
+> ⚠️ **구식 문서 (2026-08-17 표시)** — 이 스펙은 초기 설계이며 현재 구현과 다릅니다.
+> 현행: Claude API 요약 + GPT 교차검증(`claude -p` 아님), launchd 잡 3개(2개 아님),
+> 노트 파일명 `{YYMMDD}_{제목}.md`. 현재 구조의 정본은 리포 루트 `CLAUDE.md` / `README.md` 입니다.
+> 역사 기록용으로만 보존.
+
 - 날짜: 2026-06-10
-- 상태: 승인됨 (구현 대기)
+- 상태: 구식 (superseded — 위 배너 참조)
 - 목표: 개인용 PLAUD→Obsidian 음성메모 자동화를 **공개 GitHub 레포 + Claude Code 스킬**로 일반화 배포
 
 ## 1. 목적과 범위

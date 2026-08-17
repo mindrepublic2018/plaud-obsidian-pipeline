@@ -67,7 +67,7 @@ brew install python@3.11
 
 # 레포 루트에서 venv 생성 + whisperx 설치
 $(brew --prefix python@3.11)/bin/python3.11 -m venv .venv-whisperx
-.venv-whisperx/bin/pip install whisperx
+.venv-whisperx/bin/pip install whisperx   # 재현성·공급망 안전을 위해 검증된 버전 고정 권장: pip install "whisperx==<버전>"
 ```
 
 1. [HuggingFace 토큰](https://huggingface.co/settings/tokens) 발급 후 `config.env` 에 `HF_TOKEN=hf_...` 설정
@@ -139,7 +139,7 @@ tail -f logs/pipeline.log
 | 키 | 기본값 | 설명 |
 |---|---|---|
 | `VAULT_PATH` | (필수) | 옵시디언 볼트 루트 경로 |
-| `INBOX_DIR` | `$VAULT_PATH/_inbox` | 오디오 착지 폴더(launchd 감시) |
+| `INBOX_DIR` | `$VAULT_PATH/_inbox` | 오디오 착지 폴더(launchd 감시). ⚠️볼트 안이면 처리 전 오디오가 볼트 동기화(Obsidian Sync 등)로 클라우드에 올라감 — `~/Obsidian/_inbox` 처럼 볼트 밖 권장 (변경 후 `install.sh` 재실행 필요) |
 | `OUTPUT_DIR` | `$VAULT_PATH/Voice Memos` | 생성 노트 폴더 |
 | `ARCHIVE_DIR` | `$HOME/Obsidian/_audio-archive` | 처리 후 원본 오디오 보관 |
 | `WHISPER_LANG` | `ko` | 전사 언어 (en/ja 등) |
@@ -156,7 +156,10 @@ tail -f logs/pipeline.log
 | `AUDIO_RETENTION_DAYS` | `0` | 아카이브 오디오 보관일. 0 = 자동삭제 안 함 |
 
 값은 `~`, `$HOME`, `$VAULT_PATH` 를 쓸 수 있습니다.
-설정이 잘 해석되는지 확인: `python3 scripts/_config.py`.
+설정이 잘 해석되는지 확인: `python3 scripts/_config.py` (API 키는 `***` 로 마스킹되어 출력).
+`config.env` 에는 API 키가 들어가므로 **파일 퍼미션을 600 으로 유지**하세요 — install.sh 가
+생성·재실행 시 자동으로 조이지만, 에디터에 따라 저장 후 644 로 풀릴 수 있습니다
+(풀리면 스크립트가 stderr 로 경고).
 
 > 내장 요약 프롬프트는 6섹션 회의록(안건/주요 논의/결정사항/액션 아이템/다음 단계/전반 톤 메모)을
 > 생성합니다. 커스텀 프롬프트(`SUMMARY_PROMPT_FILE`)는 `TITLE: ... ---SPEAKERS--- ... ---BODY---`
@@ -185,7 +188,7 @@ tail -f logs/pipeline.log
 | `녹음 목록 비어있음/조회 실패` | 토큰 만료 → `plaud login` 재실행 |
 | `모델 없음` | `install.sh` 의 다운로드가 끝났는지(`models/*.bin`) 확인 |
 | 노트 없이 전사만 저장됨 (`status: summary_pending`) | `ANTHROPIC_API_KEY` 미설정 → 정상 폴백. 요약 원하면 config.env 에 키 설정. 키가 있는데도 폴백되면 `logs/pipeline.log` 의 "claude: HTTP ..." 로그 확인 — 401 은 키 오타, 429/529 는 일시 과부하(재시도됨) |
-| 노트 frontmatter 가 `verified: false` | `OPENAI_API_KEY` 미설정이거나 GPT 호출 실패 → Claude 요약이 그대로 저장된 정상 동작. 교차검증 원하면 키 설정 후 로그의 "gpt: ..." 확인 |
+| 노트 frontmatter 가 `verified: false` | `OPENAI_API_KEY` 미설정이거나 GPT 호출 실패 → Claude 요약이 그대로 저장된 정상 동작. 교차검증 원하면 키 설정 후 로그의 "gpt: ..." 확인. 참고: `verified: true` 는 "GPT 교차검증 처리를 통과했다"는 뜻이지 **요약 내용의 사실성을 보증하지 않습니다** — 중요한 결정·수치는 전문에서 직접 확인하세요 |
 | 같은 녹음이 중복 처리 | 여러 맥에서 동시에 켜둠 → 한 대만 두고 나머지 `bash uninstall.sh` |
 | 주기 pull 안 됨 | 맥이 잠듦 → 시스템 설정에서 잠자기 방지 |
 | 오디오가 `_inbox/_failed/` 에 있음 | 전사 3회 연속 실패 시 자동 격리(무한 재시도 방지). 파일 확인 후 다시 `_inbox` 로 옮기면 재시도 |
@@ -218,7 +221,14 @@ PLAUD 토큰 삭제: `rm -rf ~/.plaud`.
   각 서비스의 데이터 보존 정책은 본인 계정 설정으로 확인하세요. WhisperX 티어는 화자분리도 100% 로컬입니다.
 - PLAUD OAuth 토큰은 `~/.plaud/tokens.json` 에 저장되며 이 레포에 **포함되지 않습니다**.
 - API 키(`config.env`, `.assemblyai_key`, `.anthropic_key`, `.openai_key`, `.hf_token`), 로그, 모델,
-  오디오, 상태파일은 모두 `.gitignore` 처리되어 커밋되지 않습니다.
+  오디오, 상태파일은 모두 `.gitignore` 처리되어 커밋되지 않습니다 (`config.env.bak` 같은 백업 사본과
+  처리 대상 오디오 확장자 전체 포함).
+- `config.env` 는 600 퍼미션을 유지하세요(위 설정 절 참고). `python3 scripts/_config.py` 출력은
+  키를 `***` 로 마스킹합니다.
+- 처리 중 임시파일(다운로드 오디오, 변환 wav, 전사 txt)은 `/tmp` 가 아니라 레포 안
+  `state/tmp/`(700 퍼미션)에 예측 불가 이름으로 생성됩니다 — 같은 맥의 다른 계정이 읽을 수 없습니다.
+- `INBOX_DIR` 이 볼트 안이면(기본값) 처리 전 오디오가 볼트 동기화로 클라우드에 복사될 수 있습니다.
+  이를 원치 않으면 볼트 밖 경로로 설정하세요.
 
 ## 개발 / 테스트
 

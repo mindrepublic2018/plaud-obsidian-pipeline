@@ -43,8 +43,8 @@ brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
 if ! command -v node >/dev/null 2>&1; then
   echo "✗ node 가 없습니다. 'brew install node' 후 다시 실행하세요."; exit 1
 fi
-echo "▶ @plaud-ai/cli 전역 설치..."
-npm install -g @plaud-ai/cli
+echo "▶ @plaud-ai/cli 전역 설치 (버전 핀 — 공급망 변조 완화)..."
+npm install -g @plaud-ai/cli@0.3.8
 
 # 4. config.env (없으면 대화형 생성)
 if [ ! -f "$CONFIG" ]; then
@@ -59,13 +59,13 @@ if [ ! -f "$CONFIG" ]; then
   IN_LANG="${IN_LANG:-ko}"
   echo "  AssemblyAI API 키 (선택): 넣으면 클라우드 전사+화자분리를 1순위로 사용."
   echo "  ⚠️ 키를 넣으면 오디오가 AssemblyAI 서버로 전송됩니다. 비우면 100% 로컬 전사."
-  read -r -p "  AssemblyAI API 키 [없음]: " IN_AAI
+  read -r -s -p "  AssemblyAI API 키 [없음] (입력 숨김): " IN_AAI; echo ""
   echo "  Anthropic API 키 (선택): 넣으면 Claude API 로 6섹션 회의록 요약."
   echo "  ⚠️ 키를 넣으면 전사 텍스트가 Anthropic 서버로 전송됩니다. 비우면 전사 원문만 저장."
-  read -r -p "  Anthropic API 키 [없음]: " IN_ANT
+  read -r -s -p "  Anthropic API 키 [없음] (입력 숨김): " IN_ANT; echo ""
   echo "  OpenAI API 키 (선택): 넣으면 GPT 가 요약을 전사와 대조해 사실오류·누락 교정."
   echo "  ⚠️ 키를 넣으면 전사+요약이 OpenAI 서버로 전송됩니다. 비우면 검증 생략."
-  read -r -p "  OpenAI API 키 [없음]: " IN_OAI
+  read -r -s -p "  OpenAI API 키 [없음] (입력 숨김): " IN_OAI; echo ""
   {
     echo "# plaud-obsidian-pipeline 설정 (install.sh 가 생성)"
     echo "VAULT_PATH=$IN_VAULT"
@@ -79,6 +79,8 @@ if [ ! -f "$CONFIG" ]; then
   echo "  ✓ config.env 작성 완료. (필요하면 직접 편집: $CONFIG)"
 else
   echo "▶ config.env 이미 있음 — 그대로 사용 (편집하려면: $CONFIG)"
+  # 편집·복사 과정에서 0644 가 됐을 수 있음 — API 키가 든 파일이므로 항상 600 으로 조임
+  chmod 600 "$CONFIG"
 fi
 
 # 5. config 해석값 가져오기 (_config.py 단일 진실 공급원)
@@ -106,11 +108,28 @@ echo "▶ archive: $ARCHIVE_DIR"
 mkdir -p "$INBOX_DIR" "$OUTPUT_DIR" "$ARCHIVE_DIR" "$REPO/models" "$REPO/logs" "$REPO/state" "$LA"
 touch "$REPO/state/pulled_ids.txt" "$REPO/state/skipped_ids.txt"
 
-# 7. whisper 모델 (~1.5GB)
+# 7. whisper 모델 (~1.5GB) — 다운로드 후 SHA-256 검증 (손상·변조 방지)
+MODEL_FILE="$(basename "$MODEL_PATH")"
+MODEL_SHA=""
+case "$MODEL_FILE" in
+  ggml-large-v3-turbo.bin) MODEL_SHA="1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69" ;;
+esac
 if [ ! -f "$MODEL_PATH" ] || [ "$(stat -f%z "$MODEL_PATH" 2>/dev/null || echo 0)" -lt 1000000000 ]; then
   echo "▶ whisper 모델 다운로드 (~1.5GB)..."
-  curl -L -o "$MODEL_PATH" \
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$(basename "$MODEL_PATH")"
+  curl -L --proto '=https' -o "$MODEL_PATH.download" \
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_FILE"
+  if [ -n "$MODEL_SHA" ]; then
+    GOT_SHA="$(shasum -a 256 "$MODEL_PATH.download" | awk '{print $1}')"
+    if [ "$GOT_SHA" != "$MODEL_SHA" ]; then
+      echo "✗ 모델 SHA-256 불일치 — 다운로드가 손상되었거나 변조됐을 수 있습니다."
+      echo "  받은 파일: $MODEL_PATH.download (직접 확인 후 삭제하고 재시도하세요)"
+      exit 1
+    fi
+    echo "  ✓ SHA-256 검증 통과"
+  else
+    echo "  ⚠️ $MODEL_FILE 은 알려진 체크섬이 없어 검증을 건너뜁니다 (install.sh 의 case 에 추가 가능)."
+  fi
+  mv "$MODEL_PATH.download" "$MODEL_PATH"
 else
   echo "▶ 모델 이미 있음 — 건너뜀"
 fi
