@@ -363,7 +363,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def log_message(self, fmt, *args):  # 조용한 액세스 로그
-        if "/dash-data.js" not in (args[0] if args else ""):
+        if "/dash-data.js" not in (str(args[0]) if args else ""):  # log_error는 HTTPStatus를 넘긴다
             sys.stderr.write("[dash] " + fmt % args + "\n")
 
 
