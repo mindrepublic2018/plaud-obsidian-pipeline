@@ -1,0 +1,63 @@
+/* Wanted Design System — plaud 대시보드 사용분 발췌.
+   원본: Claude Design 프로젝트 "대시보드 디자인 작업"
+   _ds/wanted-design-system-1d2b34ac…/tokens/{fig-tokens,typography,base}.css.
+   전체 토큰이 아니라 이 대시보드가 실제 참조하는 토큰만 옮겼다 (라이트 모드 전용 화면). */
+
+/* ── 폰트 (오프라인이면 시스템 폰트로 폴백) ── */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard-jp.css");
+
+:root {
+  --font-primary: "Pretendard JP", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 라벨 */
+  --label-normal: rgb(23, 23, 23);
+  --label-strong: rgb(0, 0, 0);
+  --label-neutral: rgba(46, 47, 51, 0.88);
+  --label-alternative: rgba(55, 56, 60, 0.61);
+  --label-assistive: rgba(55, 56, 60, 0.28);
+  --label-disable: rgba(55, 56, 60, 0.16);
+
+  /* 프라이머리 (Wanted blue) */
+  --primary-normal: rgb(51, 102, 255);
+  --primary-strong: rgb(0, 94, 235);
+  --primary-heavy: rgb(0, 84, 209);
+
+  /* 상태 */
+  --status-positive: rgb(0, 191, 64);
+  --status-cautionary: rgb(255, 146, 0);
+  --status-negative: rgb(255, 66, 66);
+  --green-40: rgb(0, 150, 50);
+  --orange-39: rgb(209, 118, 0);
+  --blue-90: rgb(201, 222, 254);
+
+  /* 면·선 */
+  --background-normal-normal: rgb(255, 255, 255);
+  --background-normal-alternative: rgb(247, 247, 248);
+  --fill-alternative: rgba(112, 115, 124, 0.05);
+  --fill-normal: rgba(112, 115, 124, 0.08);
+  --fill-strong: rgba(112, 115, 124, 0.16);
+  --line-normal-alternative: rgba(112, 115, 124, 0.08);
+  --line-normal-neutral: rgba(112, 115, 124, 0.16);
+  --line-normal-normal: rgba(112, 115, 124, 0.22);
+  --line-normal-strong: rgba(112, 115, 124, 0.52);
+  --interaction-disable: rgb(244, 244, 245);
+  --material-dimmer: rgba(23, 23, 25, 0.52);
+  --inverse-background: rgb(27, 28, 30);
+}
+
+/* ── base (WDS base.css 발췌) ── */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-primary);
+  color: var(--label-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--blue-90); color: var(--label-strong); }
+:focus-visible { outline: 2px solid var(--primary-normal); outline-offset: 2px; }
+button { font-family: inherit; }
+img { max-width: 100%; }

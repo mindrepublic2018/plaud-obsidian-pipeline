@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLAUD 파이프라인 대시보드</title>
+<link rel="stylesheet" href="./ds/wds.css">
+<style>
+  /* Claude Design "PLAUD Dashboard.dc.html" helmet 스타일 + 바닐라 포팅용 컴포넌트 CSS */
+  html, body { margin: 0; padding: 0; background: #F7F8FA; }
+  a { color: #3366FF; text-decoration: none; }
+  a:hover { color: #244FDB; text-decoration: underline; }
+  @keyframes dashPulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
+  @keyframes wdsSpin { to { transform: rotate(360deg); } }
+
+  .hoverable:hover { background: var(--hover-bg, rgba(112,115,124,0.08)) !important; }
+  .hover-border:hover { border-color: var(--primary-normal) !important; }
+  .hover-danger:hover { color: var(--status-negative) !important; }
+
+  /* WDS Button (바닐라 재현: solid/outlined/text × primary/assistive × sm/md) */
+  .wds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid transparent;
+    transition: background .12s ease, border-color .12s ease; white-space: nowrap; }
+  .wds-btn:disabled { cursor: default; opacity: .55; }
+  .wds-btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+  .wds-btn.md { height: 40px; padding: 0 16px; font-size: 14px; }
+  .wds-btn.solid.primary { background: var(--primary-normal); color: #fff; }
+  .wds-btn.solid.primary:not(:disabled):hover { background: var(--primary-strong); }
+  .wds-btn.outlined.primary { background: #fff; color: var(--primary-normal); border-color: rgba(51,102,255,0.5); }
+  .wds-btn.outlined.primary:not(:disabled):hover { background: rgba(51,102,255,0.06); }
+  .wds-btn.outlined.assistive { background: #fff; color: var(--label-neutral); border-color: var(--line-normal-normal); }
+  .wds-btn.outlined.assistive:not(:disabled):hover { background: var(--fill-alternative); }
+  .wds-btn.text.assistive { background: none; color: var(--label-alternative); }
+  .wds-btn.text.assistive:not(:disabled):hover { background: var(--fill-normal); }
+  .wds-spinner { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35);
+    border-top-color: #fff; animation: wdsSpin .7s linear infinite; }
+
+  /* WDS Switch (sm) */
+  .wds-switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; }
+  .wds-switch input { opacity: 0; width: 0; height: 0; }
+  .wds-switch .knob { position: absolute; inset: 0; border-radius: 100px; background: var(--fill-strong);
+    transition: background .15s ease; cursor: pointer; }
+  .wds-switch .knob::before { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; top: 2px; left: 2px; transition: transform .15s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+  .wds-switch input:checked + .knob { background: var(--primary-normal); }
+  .wds-switch input:checked + .knob::before { transform: translateX(16px); }
+  .wds-switch input:focus-visible + .knob { outline: 2px solid var(--primary-normal); outline-offset: 2px; }
+
+  /* WDS Dialog */
+  .wds-dialog-dim { position: fixed; inset: 0; z-index: 50; background: var(--material-dimmer);
+    display: flex; align-items: center; justify-content: center; }
+  .wds-dialog { background: #fff; border-radius: 16px; width: 400px; max-width: calc(100vw - 48px);
+    padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.22); }
+  .wds-dialog h3 { margin: 0 0 10px 0; font-size: 17px; font-weight: 700; letter-spacing: -0.011em; }
+  .wds-dialog .body { font-size: 14px; line-height: 1.55; color: var(--label-neutral); }
+  .wds-dialog .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+  input::placeholder { color: var(--label-assistive); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+import { ICONS } from './ds/icons.js';
+
+/* Claude Design 프로젝트 "대시보드 디자인 작업" → PLAUD Dashboard.dc.html 의
+   DCLogic 컴포넌트를 바닐라 JS로 포팅. 데이터 계약은 dash-data.js (serve.py가 실시간 생성). */
+
+const $app = document.getElementById('app');
+const params = new URLSearchParams(location.search);
+const LIVE = location.protocol.startsWith('http');
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const icon = (name, size, color) => {
+  const ic = ICONS[name];
+  if (!ic) return '';
+  return `<svg viewBox="${ic.viewBox}" width="${size}" height="${size}" style="flex:none;display:block;${color ? 'color:' + color : ''}" aria-hidden="true">${ic.body}</svg>`;
+};
+
+const App = {
+  D: null,
+  state: {
+    ready: false, screen: 'home', noteStatus: '전체', noteVerified: '전체', noteQuery: '', selNote: null,
+    queueTab: 'pending', preset: 'summary_pending', logFile: 'pipeline.log', logLevel: '전체', logQuery: '',
+    follow: true, dlg: null, toast: null, pullRunning: false,
+    skipped: [], pending: [], failed: [], demoInit: false, lastRefresh: '',
+  },
+  props: { incidentDemo: params.get('demo') === '1', autoRefresh: params.get('refresh') !== '0' },
+  H: [], // 클릭 핸들러 레지스트리 (렌더마다 재구성)
+
+  async load(bust) {
+    try {
+      const m = await import('./dash-data.js' + (bust ? '?t=' + Date.now() : ''));
+      this.D = m;
+      if (bust) {
+        // 라이브 갱신: 서버 상태가 소스 오브 트루스 — 큐를 재동기화
+        this.set({ skipped: [...m.skippedQ], pending: [...m.pendingQ], failed: [...m.failedQ], lastRefresh: m.now.slice(11), demoInit: false });
+      } else {
+        this.set({ ready: true, skipped: [...m.skippedQ], pending: [...m.pendingQ], failed: [...m.failedQ], lastRefresh: m.now.slice(11) });
+      }
+      this.maybeInjectDemo();
+    } catch (e) {
+      console.warn('dash-data 로드 실패:', e);
+    }
+  },
+  set(patch) { Object.assign(this.state, patch); this.render(); },
+  h(fn) { return this.H.push(fn) - 1; },
+
+  maybeInjectDemo() {
+    const inc = this.props.incidentDemo;
+    if (inc && !this.state.demoInit && this.state.ready) {
+      this.set({
+        demoInit: true,
+        pending: [
+          { id: '8b2ed0b895812f73b73f1780af09b121', tries: 12 },
+          { id: '95083bbd88578d28587d574586293a18', tries: 41 },
+          { id: '5b8711aa7bb2afaa64735944007fe62a', tries: 88 },
+        ],
+        failed: [{ name: '20260817_고객사_전화회의.m4a', size: '38.2 MB', at: '08-17 22:41' }],
+      });
+    }
+  },
+  go(screen, extra) { this.set(Object.assign({ screen, selNote: null }, extra || {})); },
+  openDialog(cfg) { this.set({ dlg: cfg }); },
+  showToast(msg) {
+    clearTimeout(this._tt);
+    this.set({ toast: msg });
+    this._tt = setTimeout(() => this.set({ toast: null }), 3200);
+  },
+  confirmRun() {
+    const dlg = this.state.dlg;
+    this.set({ dlg: null });
+    if (dlg && dlg.run) dlg.run();
+  },
+  // 조치 액션 결과 토스트 — 백엔드 미연결(읽기 전용 serve.py) 상태를 정직하게 표시
+  actionToast(msg) {
+    this.showToast(msg + (LIVE ? ' · 프로토타입: 실제 상태 파일은 아직 바뀌지 않아요' : ''));
+  },
+  manualPull() {
+    if (this.state.pullRunning) return;
+    this.set({ pullRunning: true });
+    this.actionToast('launchctl kickstart — pull 잡 실행을 요청했어요');
+    setTimeout(() => { this.set({ pullRunning: false }); this.actionToast('pull 완료 — 전체 ' + (this.D ? this.D.funnel[0].value : '?') + '개 / 신규·재시도 0개'); }, 5000);
+  },
+  chip(label, active, go, danger) {
+    return {
+      label, go,
+      bg: active ? (danger ? 'rgba(255,66,66,0.08)' : 'rgba(51,102,255,0.08)') : '#FFFFFF',
+      color: active ? (danger ? 'var(--status-negative)' : 'var(--primary-normal)') : 'var(--label-neutral)',
+      border: active ? (danger ? 'rgba(255,66,66,0.5)' : 'rgba(51,102,255,0.5)') : 'rgba(112,115,124,0.22)',
+    };
+  },
+  pill(kind) {
+    if (kind === 'ok') return { bg: 'rgba(0,191,64,0.10)', color: 'rgb(0,145,50)' };
+    if (kind === 'warn') return { bg: 'rgba(255,150,0,0.12)', color: 'rgb(200,110,0)' };
+    if (kind === 'bad') return { bg: 'rgba(255,66,66,0.10)', color: 'var(--status-negative)' };
+    return { bg: 'rgba(112,115,124,0.10)', color: 'var(--label-neutral)' };
+  },
+  classify(line) {
+    if (line.includes('⚠️') || line.includes('✗') || line.includes('실패') || line.includes('Error')) return 'warn';
+    if (line.includes('✓')) return 'ok';
+    return 'info';
+  },
+  btn(label, { variant = 'solid', color = 'primary', size = 'sm', onClick, loading = false, disabled = false } = {}) {
+    const hid = onClick ? this.h(onClick) : '';
+    return `<button class="wds-btn ${variant} ${color} ${size}" ${onClick ? `data-h="${hid}"` : ''} ${disabled || loading ? 'disabled' : ''}>${loading ? '<span class="wds-spinner"></span>' : ''}${esc(label)}</button>`;
+  },
+
+  render() {
+    const S = this.state, D = this.D;
+    this.H = [];
+    const inc = this.props.incidentDemo;
+    const autoRefreshOn = this.props.autoRefresh;
+    const titles = { home: '홈 — 파이프라인 상태', notes: '처리 내역', queues: '실패·보류 관리', quality: '노트 품질', logs: '로그 뷰어', settings: '설정' };
+    const navDefs = [
+      ['home', '홈', 'home'], ['notes', '처리 내역', 'documentText'], ['queues', '실패·보류', 'circleExclamation'],
+      ['quality', '노트 품질', 'circleCheck'], ['logs', '로그', 'list'], ['settings', '설정', 'setting'],
+    ];
+    const queueCount = S.pending.length + S.failed.length + S.skipped.length;
+
+    // ── 사이드바 ──
+    const navHtml = navDefs.map(([id, label, ic]) => {
+      const active = S.screen === id;
+      const count = id === 'queues' && queueCount > 0 ? String(queueCount) : null;
+      const countBg = S.failed.length > 0 ? 'rgba(255,66,66,0.12)' : 'rgba(112,115,124,0.12)';
+      const countColor = S.failed.length > 0 ? 'var(--status-negative)' : 'var(--label-neutral)';
+      return `<div class="hoverable" data-h="${this.h(() => this.go(id))}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:${active ? 700 : 500};color:${active ? 'var(--primary-normal)' : 'var(--label-neutral)'};background:${active ? 'rgba(51,102,255,0.08)' : 'transparent'};">
+        ${icon(ic, 18)}<span style="flex:1;">${esc(label)}</span>
+        ${count ? `<span style="font-size:11px;font-weight:600;padding:1px 7px;border-radius:100px;background:${countBg};color:${countColor};">${count}</span>` : ''}
+      </div>`;
+    }).join('');
+
+    const jobStates = this.jobCards(inc);
+    const jobDotsHtml = jobStates.map((j) => `
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--label-neutral);">
+        <span style="width:7px;height:7px;border-radius:100px;background:${j.dot};animation:${j.anim};"></span>
+        <span style="font-family:var(--font-mono);">${esc(j.name)}</span>
+        <span style="margin-left:auto;color:var(--label-assistive);">${esc(j.badge)}</span>
+      </div>`).join('');
+
+    // ── 헤더 ──
+    const headerHtml = `
+      <header style="flex:none;height:60px;display:flex;align-items:center;gap:12px;padding:0 24px;background:#FFFFFF;border-bottom:1px solid rgba(112,115,124,0.16);">
+        <h1 style="margin:0;font-size:18px;font-weight:700;letter-spacing:-0.01em;">${esc(titles[S.screen])}</h1>
+        ${S.pullRunning ? `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--primary-normal);background:rgba(51,102,255,0.08);padding:3px 10px;border-radius:100px;">
+          <span style="width:6px;height:6px;border-radius:100px;background:var(--primary-normal);animation:dashPulse 1.2s ease infinite;"></span>pull 실행 중</span>` : ''}
+        <div style="margin-left:auto;display:flex;align-items:center;gap:14px;">
+          ${autoRefreshOn ? `<span style="font-size:12px;color:var(--label-alternative);">자동 새로고침 5초 · 다음 pull ${esc(D ? D.nextPull.slice(11) : '—')}</span>` : ''}
+          ${this.btn('수동 pull 실행', { onClick: () => this.manualPull(), loading: S.pullRunning })}
+        </div>
+      </header>`;
+
+    // ── 콘텐츠 ──
+    let content = '';
+    if (!D) {
+      content = '<div style="padding:40px;color:var(--label-alternative);font-size:14px;">데이터 로딩 중…</div>';
+    } else if (S.screen === 'home') content = this.renderHome(inc, jobStates);
+    else if (S.screen === 'notes') content = this.renderNotes();
+    else if (S.screen === 'queues') content = this.renderQueues();
+    else if (S.screen === 'quality') content = this.renderQuality();
+    else if (S.screen === 'logs') content = this.renderLogs();
+    else if (S.screen === 'settings') content = this.renderSettings();
+
+    // ── 드로어 (노트 상세) ──
+    const n = S.selNote;
+    let drawer = '';
+    if (n) {
+      const rows = [
+        ['file', n.file], ['created', n.date], ['status', n.status],
+        ['verified', n.verified === null || n.verified === undefined ? '— (요약 없음)' : String(n.verified)],
+        ['summary_model', n.model || '—'], ['engine', n.engine],
+        ['speakers', (n.speakers || []).join(', ') || '— (화자분리 없음)'], ['tags', '음성메모, 자동전사'],
+      ];
+      const vault = D && D.vaultName ? D.vaultName : 'MyVault';
+      const rel = D && D.outputRel ? D.outputRel : 'Voice Memos';
+      const obsUrl = 'obsidian://open?vault=' + encodeURIComponent(vault) + '&file=' + encodeURIComponent(rel + '/' + n.file.replace(/\.md$/, ''));
+      drawer = `<aside style="width:380px;flex:none;background:#FFFFFF;border-left:1px solid rgba(112,115,124,0.16);display:flex;flex-direction:column;overflow-y:auto;">
+        <div style="padding:16px 20px;border-bottom:1px solid rgba(112,115,124,0.16);display:flex;align-items:center;gap:8px;">
+          <div style="font-size:14px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(n.file)}</div>
+          ${this.btn('닫기', { variant: 'text', color: 'assistive', onClick: () => this.set({ selNote: null }) })}
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px;">
+          ${rows.map(([k, v]) => `<div style="display:flex;gap:12px;font-size:13px;">
+            <span style="width:110px;flex:none;color:var(--label-assistive);font-family:var(--font-mono);font-size:12px;">${esc(k)}</span>
+            <span style="min-width:0;word-break:break-all;color:var(--label-neutral);">${esc(v)}</span></div>`).join('')}
+          <div style="margin-top:6px;font-size:12px;color:var(--label-alternative);background:rgba(112,115,124,0.06);border-radius:8px;padding:10px 12px;">본문 미리보기는 읽기 전용이에요. 편집은 옵시디언에서 해주세요.</div>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <a href="${obsUrl}" style="text-decoration:none;">${this.btn('옵시디언에서 열기', {})}</a>
+          </div>
+        </div>
+      </aside>`;
+    }
+
+    // ── 다이얼로그 ──
+    const dlg = S.dlg;
+    const dlgHtml = dlg ? `<div class="wds-dialog-dim" data-h="${this.h((e) => { if (e && e.target && e.target.classList.contains('wds-dialog-dim')) this.set({ dlg: null }); })}">
+      <div class="wds-dialog" role="dialog" aria-modal="true">
+        <h3>${esc(dlg.title)}</h3>
+        <div class="body">${esc(dlg.body)}</div>
+        <div class="footer">
+          ${this.btn('취소', { variant: 'text', color: 'assistive', size: 'md', onClick: () => this.set({ dlg: null }) })}
+          ${this.btn(dlg.confirm, { size: 'md', onClick: () => this.confirmRun() })}
+        </div>
+      </div></div>` : '';
+
+    // ── 토스트 ──
+    const toastHtml = S.toast ? `<div style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:60;background:rgba(23,23,23,0.92);color:#FFFFFF;font-size:13px;font-weight:500;padding:10px 18px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,0.20);display:flex;align-items:center;gap:8px;">
+      <span style="color:#34C759;">✓</span> ${esc(S.toast)}</div>` : '';
+
+    $app.innerHTML = `
+    <div style="display:flex;width:100%;height:100vh;overflow:hidden;font-family:var(--font-primary);color:var(--label-normal);background:#F7F8FA;">
+      <nav style="width:224px;flex:none;background:#FFFFFF;border-right:1px solid rgba(112,115,124,0.16);display:flex;flex-direction:column;">
+        <div style="padding:20px 20px 14px 20px;">
+          <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;">PLAUD 파이프라인</div>
+          <div style="margin-top:3px;font-size:12px;color:var(--label-alternative);font-family:var(--font-mono);">${LIVE ? esc(location.host) : '스냅샷 미리보기'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;padding:6px 12px;">${navHtml}</div>
+        <div style="margin-top:auto;padding:14px 20px 18px 20px;border-top:1px solid rgba(112,115,124,0.16);display:flex;flex-direction:column;gap:8px;">
+          ${jobDotsHtml}
+          <div style="font-size:11px;color:var(--label-assistive);margin-top:4px;">마지막 갱신 ${esc(S.lastRefresh || '—')}</div>
+        </div>
+      </nav>
+      <main style="flex:1;min-width:0;display:flex;flex-direction:column;">
+        ${headerHtml}
+        <div style="flex:1;overflow-y:auto;padding:20px 24px 40px 24px;">${content}</div>
+      </main>
+      ${drawer}${dlgHtml}${toastHtml}
+    </div>`;
+
+    if (S.follow && S.screen === 'logs') {
+      const el = $app.querySelector('[data-logpane]');
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+    // 검색 인풋 포커스 복원
+    if (this._focusKey) {
+      const el = $app.querySelector(`[data-key="${this._focusKey}"]`);
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      this._focusKey = null;
+    }
+  },
+
+  jobCards(inc) {
+    const S = this.state, D = this.D;
+    if (!D) return [];
+    return D.jobs.map((j) => {
+      const bad = (inc && j.id === 'process') || j.loaded === false || (j.exit && j.exit !== 0);
+      const running = j.id === 'pull' && S.pullRunning;
+      return {
+        name: j.id, label: j.label, trigger: j.trigger,
+        last: inc && j.id === 'process' ? '08-17 22:41 (exit 78)' : j.last,
+        dot: bad ? 'var(--status-negative)' : 'var(--status-positive)',
+        anim: running ? 'dashPulse 1.2s ease infinite' : 'none',
+        badge: inc && j.id === 'process' ? 'exit 78' : (bad ? (j.loaded === false ? '미로드' : 'exit ' + j.exit) : (running ? '실행 중' : '로드됨')),
+        badgeBg: bad ? 'rgba(255,66,66,0.10)' : (running ? 'rgba(51,102,255,0.10)' : 'rgba(0,191,64,0.10)'),
+        badgeColor: bad ? 'var(--status-negative)' : (running ? 'var(--primary-normal)' : 'rgb(0,145,50)'),
+      };
+    });
+  },
+
+  renderHome(inc, jobStates) {
+    const S = this.state, D = this.D;
+    const gapBanner = D.gap && D.gap.unexplained > 0 ? `
+      <div class="hoverable" style="--hover-bg:rgba(255,150,0,0.16);display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;border-radius:10px;background:rgba(255,150,0,0.10);border:1px solid rgba(255,150,0,0.35);cursor:pointer;font-size:13px;color:var(--label-normal);" data-h="${this.h(() => this.go('quality', { preset: 'gap' }))}">
+        <span style="color:var(--status-cautionary);font-weight:700;">⚠</span>
+        <span><strong>정합성 갭</strong> — 수신 ${D.gap.pulled}건 중 노트·큐로 설명되지 않는 <strong>${D.gap.unexplained}건</strong>이 있어요. 품질 뷰에서 대차대조표 확인 →</span>
+      </div>` : '';
+    const incBanner = inc ? `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;border-radius:10px;background:rgba(255,66,66,0.08);border:1px solid rgba(255,66,66,0.3);font-size:13px;">
+        <span style="color:var(--status-negative);font-weight:700;">●</span>
+        <span><strong>장애 데모 모드</strong> — 격리 1건 · 보류 3건이 시뮬레이션으로 주입된 상태예요 (?demo=1 제거로 해제).</span>
+      </div>` : '';
+
+    const jobsHtml = jobStates.map((j) => `
+      <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:8px;height:8px;border-radius:100px;background:${j.dot};animation:${j.anim};"></span>
+          <span style="font-size:14px;font-weight:700;">${esc(j.name)}</span>
+          <span style="margin-left:auto;font-size:11px;font-weight:600;padding:2px 8px;border-radius:100px;background:${j.badgeBg};color:${j.badgeColor};">${esc(j.badge)}</span>
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:var(--label-alternative);font-family:var(--font-mono);">${esc(j.label)}</div>
+        <div style="margin-top:6px;display:flex;gap:12px;font-size:12px;color:var(--label-neutral);">
+          <span>${esc(j.trigger)}</span><span style="margin-left:auto;color:var(--label-assistive);">마지막 ${esc(j.last)}</span>
+        </div>
+      </div>`).join('');
+
+    const funnelVals = { pending: S.pending.length, failed: S.failed.length, skipped: S.skipped.length };
+    if (inc) funnelVals.inbox = 1;
+    const funnelHtml = D.funnel.map((f, i) => {
+      const value = f.key in funnelVals ? funnelVals[f.key] : f.value;
+      const warn = value > 0 && ['pending', 'failed', 'skipped'].includes(f.key);
+      const numColor = f.key === 'failed' && value > 0 ? 'var(--status-negative)' : (warn ? 'var(--status-cautionary)' : 'var(--label-normal)');
+      const go = this.h(() => this.go(f.to, f.to === 'queues' ? { queueTab: ['pending', 'failed', 'skipped'].includes(f.key) ? f.key : 'pending' } : {}));
+      return `<div style="display:flex;align-items:center;flex:1;min-width:0;">
+        <div class="hoverable" style="--hover-bg:rgba(51,102,255,0.06);flex:1;min-width:0;padding:10px 12px;border-radius:10px;cursor:pointer;" data-h="${go}">
+          <div style="font-size:12px;color:var(--label-alternative);white-space:nowrap;">${esc(f.label)}</div>
+          <div style="margin-top:2px;font-size:24px;font-weight:700;letter-spacing:-0.02em;color:${numColor};">${value}</div>
+          <div style="margin-top:2px;font-size:11px;color:var(--label-assistive);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(f.src)}</div>
+        </div>
+        ${i < D.funnel.length - 1 ? '<span style="flex:none;padding:0 2px;color:var(--label-assistive);font-size:13px;">→</span>' : ''}
+      </div>`;
+    }).join('');
+
+    const tlMarks = { ok: ['✓', 'rgb(0,145,50)'], warn: ['⚠', 'var(--status-cautionary)'], info: ['·', 'var(--label-assistive)'] };
+    const tlHtml = D.timeline.map((e) => `
+      <div style="display:flex;align-items:baseline;gap:10px;padding:6px 0;border-bottom:1px solid rgba(112,115,124,0.08);font-size:13px;">
+        <span style="flex:none;width:16px;text-align:center;color:${tlMarks[e.kind][1]};font-weight:700;">${tlMarks[e.kind][0]}</span>
+        <span style="flex:none;width:100px;font-family:var(--font-mono);font-size:12px;color:var(--label-assistive);">${esc(e.t)}</span>
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--label-neutral);">${esc(e.text)}</span>
+      </div>`).join('');
+
+    const anomalies = [];
+    if (S.failed.length > 0) anomalies.push({ text: `_failed/ 격리 파일 ${S.failed.length}건 — 전사 3회 연속 실패`, tab: 'failed' });
+    if (S.pending.length > 0) anomalies.push({ text: `보류 큐 ${S.pending.length}건${S.pending.some((p) => p.tries >= 80) ? ' — 1건이 만료(96회) 임박' : ''}`, tab: 'pending' });
+    if (D.anomalies) for (const a of D.anomalies) anomalies.push({ text: a, tab: 'pending' });
+    const anomaliesHtml = anomalies.length === 0
+      ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--label-neutral);"><span style="color:var(--status-positive);font-weight:700;">✓</span> 격리·아카이브 실패·권한 경고 없음</div>`
+      : anomalies.map((a) => `<div class="hover-danger" style="margin-top:8px;display:flex;align-items:baseline;gap:8px;font-size:13px;color:var(--label-neutral);cursor:pointer;" data-h="${this.h(() => this.go('queues', { queueTab: a.tab }))}"><span style="color:var(--status-negative);font-weight:700;">⚠</span> ${esc(a.text)}</div>`).join('');
+
+    return `${gapBanner}${incBanner}
+      <section style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">${jobsHtml}</section>
+      <section style="margin-top:16px;background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <h2 style="margin:0;font-size:14px;font-weight:700;">파이프라인 퍼널</h2>
+          <span style="font-size:12px;color:var(--label-assistive);">카운터 클릭 시 상세로 이동</span>
+        </div>
+        <div style="margin-top:12px;display:flex;align-items:stretch;gap:0;">${funnelHtml}</div>
+      </section>
+      <section style="margin-top:16px;display:grid;grid-template-columns:1fr 320px;gap:12px;align-items:start;">
+        <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
+          <div style="display:flex;align-items:baseline;gap:8px;">
+            <h2 style="margin:0;font-size:14px;font-weight:700;">최근 활동</h2>
+            <span style="font-size:12px;color:var(--label-assistive);font-family:var(--font-mono);">pipeline.log</span>
+            <span style="margin-left:auto;font-size:12px;color:var(--primary-normal);cursor:pointer;font-weight:600;" data-h="${this.h(() => this.go('logs'))}">로그 전체 보기 →</span>
+          </div>
+          <div style="margin-top:10px;display:flex;flex-direction:column;">${tlHtml}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
+            <h2 style="margin:0;font-size:14px;font-weight:700;">다음 pull</h2>
+            <div style="margin-top:8px;font-size:21px;font-weight:700;letter-spacing:-0.01em;">${esc(D.nextPull.slice(11))}</div>
+            <div style="margin-top:4px;font-size:12px;color:var(--label-alternative);">마지막 pull ${esc(D.lastPull.slice(5, 16))} · 주기 ${esc(String((D.pullInterval || 900)))}초</div>
+          </div>
+          <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
+            <h2 style="margin:0;font-size:14px;font-weight:700;">이상 신호</h2>${anomaliesHtml}
+          </div>
+        </div>
+      </section>`;
+  },
+
+  renderNotes() {
+    const S = this.state, D = this.D;
+    const stChips = ['전체', 'active', 'summary_pending'].map((v) => this.chip(v, S.noteStatus === v, () => this.set({ noteStatus: v })));
+    const vChips = ['전체', '검증됨', '미검증'].map((v) => this.chip(v, S.noteVerified === v, () => this.set({ noteVerified: v })));
+    const chipHtml = (c) => `<button data-h="${this.h(c.go)}" style="border:1px solid ${c.border};background:${c.bg};color:${c.color};font-size:13px;font-weight:600;padding:6px 12px;border-radius:100px;cursor:pointer;font-family:inherit;">${esc(c.label)}</button>`;
+    const q = S.noteQuery.trim();
+    const filtered = D.notes.filter((n) =>
+      (S.noteStatus === '전체' || n.status === S.noteStatus) &&
+      (S.noteVerified === '전체' || (S.noteVerified === '검증됨' ? n.verified === true : n.verified === false)) &&
+      (!q || n.title.includes(q) || n.file.includes(q)));
+    const rows = filtered.map((n) => {
+      const st = n.status === 'active' ? this.pill('ok') : this.pill('warn');
+      const v = n.verified === true ? this.pill('ok') : (n.verified === false ? this.pill('warn') : this.pill('info'));
+      const vLabel = n.verified === true ? 'verified' : (n.verified === false ? 'unverified' : '—');
+      const sel = S.selNote === n;
+      return `<div class="hoverable" style="--hover-bg:rgba(51,102,255,0.05);display:grid;grid-template-columns:92px 1fr 130px 96px 104px 120px;gap:8px;align-items:center;padding:7px 16px;border-bottom:1px solid rgba(112,115,124,0.08);font-size:13px;cursor:pointer;background:${sel ? 'rgba(51,102,255,0.06)' : 'transparent'};" data-h="${this.h(() => this.set({ selNote: n }))}">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--label-neutral);">${esc(n.date.slice(2))}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;">${esc(n.title)}</span>
+        <span><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:100px;background:${st.bg};color:${st.color};">${esc(n.status)}</span></span>
+        <span><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:100px;background:${v.bg};color:${v.color};">${vLabel}</span></span>
+        <span style="font-size:12px;color:var(--label-neutral);">${esc(n.engine)}</span>
+        <span style="font-size:12px;color:var(--label-alternative);font-family:var(--font-mono);">${esc(n.model || '—')}</span>
+      </div>`;
+    }).join('');
+    return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        ${stChips.map(chipHtml).join('')}
+        <span style="width:1px;height:20px;background:rgba(112,115,124,0.22);margin:0 4px;"></span>
+        ${vChips.map(chipHtml).join('')}
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+          <input data-key="noteq" data-input="noteQuery" value="${esc(S.noteQuery)}" placeholder="제목·파일명 검색" style="width:220px;padding:7px 12px;border:1px solid rgba(112,115,124,0.22);border-radius:8px;font-size:13px;font-family:inherit;outline-color:var(--primary-normal);background:#FFFFFF;">
+          <span style="font-size:12px;color:var(--label-assistive);">${filtered.length}건</span>
+        </div>
+      </div>
+      <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;overflow:hidden;">
+        <div style="display:grid;grid-template-columns:92px 1fr 130px 96px 104px 120px;gap:8px;padding:9px 16px;font-size:12px;font-weight:600;color:var(--label-alternative);border-bottom:1px solid rgba(112,115,124,0.16);background:#FAFAFB;">
+          <span>날짜</span><span>제목</span><span>status</span><span>verified</span><span>전사 엔진</span><span>요약 모델</span>
+        </div>
+        <div style="max-height:calc(100vh - 240px);overflow-y:auto;">${rows}</div>
+      </div>`;
+  },
+
+  renderQueues() {
+    const S = this.state;
+    const tabDefs = [['pending', '보류 큐', S.pending.length], ['failed', '격리 (_failed/)', S.failed.length], ['skipped', '건너뜀', S.skipped.length]];
+    const tabsHtml = tabDefs.map(([id, label, count]) => {
+      const active = S.queueTab === id;
+      const countBg = count > 0 ? (id === 'failed' ? 'rgba(255,66,66,0.12)' : 'rgba(255,150,0,0.14)') : 'rgba(112,115,124,0.10)';
+      const countColor = count > 0 ? (id === 'failed' ? 'var(--status-negative)' : 'rgb(200,110,0)') : 'var(--label-assistive)';
+      return `<button data-h="${this.h(() => this.set({ queueTab: id }))}" style="border:none;background:none;cursor:pointer;font-family:inherit;font-size:14px;font-weight:${active ? 700 : 500};color:${active ? 'var(--label-normal)' : 'var(--label-alternative)'};padding:9px 14px;border-bottom:2px solid ${active ? 'var(--primary-normal)' : 'transparent'};display:flex;align-items:center;gap:6px;">
+        ${esc(label)}<span style="font-size:11px;font-weight:700;padding:0 7px;border-radius:100px;background:${countBg};color:${countColor};">${count}</span></button>`;
+    }).join('');
+
+    const empty = (title, sub) => `
+      <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:48px 24px;display:flex;flex-direction:column;align-items:center;gap:8px;">
+        <span style="color:var(--status-positive);">${icon('circleCheck', 28)}</span>
+        <div style="font-size:15px;font-weight:600;">${esc(title)}</div>
+        <div style="font-size:13px;color:var(--label-alternative);">${esc(sub)}</div>
+      </div>`;
+
+    let body = '';
+    if (S.queueTab === 'pending') {
+      body = S.pending.length === 0
+        ? empty('보류 큐가 비어 있어요', 'pending_ids.txt 없음 — 서버측 오디오가 모두 준비된 정상 상태예요.')
+        : S.pending.map((p) => `
+          <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:16px;">
+            <span style="font-family:var(--font-mono);font-size:13px;width:280px;overflow:hidden;text-overflow:ellipsis;">${esc(p.id)}</span>
+            <div style="flex:1;max-width:320px;">
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--label-assistive);margin-bottom:3px;"><span>시도 ${p.tries}/96</span><span>만료 약 ${Math.max(0, Math.round((96 - p.tries) / 4))}시간 후</span></div>
+              <div style="height:5px;border-radius:100px;background:rgba(112,115,124,0.16);overflow:hidden;"><div style="height:100%;width:${Math.round((p.tries / 96) * 100)}%;background:var(--status-cautionary);border-radius:100px;"></div></div>
+            </div>
+            <div style="margin-left:auto;">${this.btn('시도횟수 리셋', { variant: 'outlined', color: 'assistive', onClick: () => this.openDialog({
+              title: '시도횟수를 리셋할까요?',
+              body: 'pending_ids.txt에서 id ' + p.id.slice(0, 8) + '…의 시도횟수를 ' + p.tries + '→0으로 되돌려요. 만료(96회)까지의 재시도가 처음부터 다시 시작돼요.',
+              confirm: '리셋',
+              run: () => { this.set({ pending: this.state.pending.map((x) => x === p ? { ...x, tries: 0 } : x) }); this.actionToast('시도횟수를 리셋했어요 — 다음 pull 주기에 재시도돼요'); },
+            }) })}</div>
+          </div>`).join('');
+    } else if (S.queueTab === 'failed') {
+      body = S.failed.length === 0
+        ? empty('격리된 파일이 없어요', 'INBOX/_failed/ 없음 — 전사 3회 연속 실패한 파일이 없는 정상 상태예요.')
+        : S.failed.map((f) => `
+          <div style="background:#FFFFFF;border:1px solid rgba(255,66,66,0.3);border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:16px;">
+            <span style="color:var(--status-negative);font-weight:700;">⚠</span>
+            <div style="min-width:0;">
+              <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;">${esc(f.name)}</div>
+              <div style="font-size:12px;color:var(--label-alternative);">${esc(f.size)} · 격리 ${esc(f.at)} · 실패 3/3회</div>
+            </div>
+            <div style="margin-left:auto;">${this.btn('수신함 복귀', { onClick: () => this.openDialog({
+              title: '수신함으로 복귀할까요?',
+              body: f.name + '은(는) 전사에 3회 실패했던 파일이에요. _failed/에서 INBOX로 되돌리고 transcribe_failures.txt 카운트를 리셋해요. 다시 실패하면 재격리돼요.',
+              confirm: '수신함 복귀',
+              run: () => { this.set({ failed: this.state.failed.filter((x) => x !== f) }); this.actionToast('INBOX로 복귀 — 폴더 감시가 곧 처리를 시작해요'); },
+            }) })}</div>
+          </div>`).join('');
+    } else {
+      body = S.skipped.length === 0
+        ? empty('건너뛴 녹음이 없어요', 'skipped_ids.txt 비어 있음.')
+        : S.skipped.map((id) => `
+          <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:16px;">
+            <span style="font-family:var(--font-mono);font-size:13px;">${esc(id.slice(0, 8) + '…' + id.slice(-6))}</span>
+            <span style="font-size:12px;color:var(--label-alternative);">보류 96회(≈24h) 초과로 영구 건너뜀</span>
+            <div style="margin-left:auto;">${this.btn('복구', { variant: 'outlined', onClick: () => this.openDialog({
+              title: '건너뜀을 복구할까요?',
+              body: 'skipped_ids.txt에서 id ' + id.slice(0, 8) + '…를 제거해요. 다음 pull 주기에 다시 다운로드를 시도해요. 서버측 오디오가 여전히 미준비면 다시 skip 판정될 수 있어요.',
+              confirm: '복구',
+              run: () => { this.set({ skipped: this.state.skipped.filter((x) => x !== id) }); this.actionToast('복구했어요 — 다음 pull(' + (this.D ? this.D.nextPull.slice(11, 16) : '') + ')에 재시도돼요'); },
+            }) })}</div>
+          </div>`).join('');
+    }
+    return `<div style="display:flex;gap:4px;border-bottom:1px solid rgba(112,115,124,0.16);margin-bottom:16px;">${tabsHtml}</div>${body}`;
+  },
+
+  renderQuality() {
+    const S = this.state, D = this.D;
+    const spNotes = D.notes.filter((n) => n.status === 'summary_pending');
+    const unvNotes = D.notes.filter((n) => n.verified === false);
+    const spkNotes = D.notes.filter((n) => (n.speakers || []).some((s) => s.startsWith('?')));
+    const presetDefs = [
+      ['summary_pending', 'summary_pending', spNotes.length, '요약 실패 — 전문만 저장 (재요약 후보)'],
+      ['unverified', 'verified: false', unvNotes.length, 'GPT 교차검증 미반영'],
+      ['speakers', '화자 미해결', spkNotes.length, '?(역할) 플레이스홀더 잔존'],
+      ['gap', '정합성 갭', D.gap.unexplained, '수신 vs 노트 대차대조 — 원인 불명'],
+    ];
+    const cards = presetDefs.map(([id, label, value, desc]) => `
+      <div class="hover-border" style="background:#FFFFFF;border:1.5px solid ${S.preset === id ? 'var(--primary-normal)' : 'rgba(112,115,124,0.16)'};border-radius:12px;padding:14px 16px;cursor:pointer;" data-h="${this.h(() => this.set({ preset: id }))}">
+        <div style="font-size:13px;font-weight:600;color:var(--label-neutral);">${esc(label)}</div>
+        <div style="margin-top:4px;font-size:26px;font-weight:700;letter-spacing:-0.02em;color:${value > 0 ? (id === 'gap' ? 'var(--status-cautionary)' : 'var(--label-normal)') : 'var(--label-assistive)'};">${value}</div>
+        <div style="margin-top:2px;font-size:11px;color:var(--label-assistive);">${esc(desc)}</div>
+      </div>`).join('');
+
+    let body = '';
+    if (S.preset === 'gap') {
+      const rows = D.gap.rows.map((g) => `
+        <div style="display:flex;align-items:baseline;gap:10px;padding:8px 0;border-bottom:1px solid rgba(112,115,124,0.08);font-size:13px;">
+          <span style="width:14px;text-align:center;color:var(--label-assistive);font-weight:700;">${esc(g.sign || '')}</span>
+          <span style="color:var(--label-neutral);">${esc(g.label)}</span>
+          <span style="margin-left:auto;font-family:var(--font-mono);font-weight:600;">${g.value}</span>
+        </div>`).join('');
+      body = `<div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
+        <h2 style="margin:0 0 4px 0;font-size:14px;font-weight:700;">정합성 갭 리포트</h2>
+        <div style="font-size:12px;color:var(--label-alternative);margin-bottom:12px;">수신 id가 어느 큐·산출물로 설명되는지의 대차대조표. 카운트는 추정치예요 (CLI 파싱 기반).</div>
+        ${rows}
+        <div style="display:flex;align-items:baseline;gap:10px;padding:10px 0 2px 0;font-size:14px;font-weight:700;">
+          <span style="width:14px;text-align:center;color:var(--status-cautionary);">=</span>
+          <span style="color:var(--status-cautionary);">원인 불명</span>
+          <span style="margin-left:auto;font-family:var(--font-mono);color:var(--status-cautionary);">${D.gap.unexplained}건</span>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--label-alternative);background:rgba(112,115,124,0.06);border-radius:8px;padding:10px 12px;">파이프라인 도입 전에 pull만 되고 처리되지 않은 초기 녹음일 가능성이 높아요. 해당 id는 INBOX에 재투입하면 처리됩니다.</div>
+      </div>`;
+    } else {
+      const list = S.preset === 'summary_pending' ? spNotes : (S.preset === 'unverified' ? unvNotes : spkNotes);
+      const problem = S.preset === 'summary_pending' ? '요약 실패' : (S.preset === 'unverified' ? '검증 미반영' : '화자 ?');
+      const pp = S.preset === 'speakers' ? this.pill('bad') : this.pill('warn');
+      const rows = list.map((n) => `
+        <div class="hoverable" style="--hover-bg:rgba(51,102,255,0.05);display:grid;grid-template-columns:92px 1fr 150px 200px;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid rgba(112,115,124,0.08);font-size:13px;cursor:pointer;" data-h="${this.h(() => this.set({ selNote: n }))}">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--label-neutral);">${esc(n.date.slice(2))}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;">${esc(n.title)}</span>
+          <span><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:100px;background:${pp.bg};color:${pp.color};">${esc(problem)}</span></span>
+          <span style="font-size:12px;color:var(--label-neutral);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((n.speakers || []).join(', ') || '—')}</span>
+        </div>`).join('');
+      body = `<div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;overflow:hidden;">
+        <div style="display:grid;grid-template-columns:92px 1fr 150px 200px;gap:8px;padding:9px 16px;font-size:12px;font-weight:600;color:var(--label-alternative);border-bottom:1px solid rgba(112,115,124,0.16);background:#FAFAFB;">
+          <span>날짜</span><span>노트</span><span>문제</span><span>화자</span>
+        </div>
+        ${list.length === 0 ? '<div style="padding:40px 24px;text-align:center;font-size:13px;color:var(--label-alternative);">해당하는 노트가 없어요 — 모두 정상이에요.</div>' : rows}
+      </div>`;
+    }
+    return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">${cards}</div>${body}`;
+  },
+
+  renderLogs() {
+    const S = this.state, D = this.D;
+    const chipHtml = (c, mono) => `<button data-h="${this.h(c.go)}" style="border:1px solid ${c.border};background:${c.bg};color:${c.color};font-size:${mono ? 12 : 13}px;font-weight:600;padding:${mono ? '5px 11px' : '6px 12px'};border-radius:100px;cursor:pointer;font-family:${mono ? 'var(--font-mono)' : 'inherit'};">${esc(c.label)}</button>`;
+    const fileChips = D.logFiles.map((f) => this.chip(f.name, S.logFile === f.name, () => this.set({ logFile: f.name })));
+    const levelChips = ['전체', '✓ 성공', '⚠ 경고·에러'].map((v) => this.chip(v, S.logLevel === v, () => this.set({ logLevel: v })));
+    const file = D.logFiles.find((f) => f.name === S.logFile) || D.logFiles[0];
+    const lq = S.logQuery.trim();
+    let lines = file.lines.map((text) => ({ text, kind: this.classify(text) }));
+    if (S.logLevel === '✓ 성공') lines = lines.filter((l) => l.kind === 'ok');
+    if (S.logLevel === '⚠ 경고·에러') lines = lines.filter((l) => l.kind === 'warn');
+    if (lq) lines = lines.filter((l) => l.text.includes(lq));
+    const logTotal = lines.length;
+    if (S.follow && lines.length > 100) lines = lines.slice(-100);
+    const logColors = { ok: 'rgb(94,215,133)', warn: 'rgb(255,138,128)', info: 'rgba(255,255,255,0.72)' };
+    const rows = lines.map((l) => `<div style="padding:1px 18px;font-family:var(--font-mono);font-size:12px;line-height:1.75;white-space:pre-wrap;word-break:break-all;color:${logColors[l.kind]};">${esc(l.text)}</div>`).join('');
+    return `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap;">${fileChips.map((c) => chipHtml(c, true)).join('')}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        ${levelChips.map((c) => chipHtml(c, false)).join('')}
+        <input data-key="logq" data-input="logQuery" value="${esc(S.logQuery)}" placeholder="텍스트 검색" style="width:200px;padding:7px 12px;border:1px solid rgba(112,115,124,0.22);border-radius:8px;font-size:13px;font-family:inherit;outline-color:var(--primary-normal);background:#FFFFFF;">
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--label-neutral);">
+          tail 팔로우
+          <label class="wds-switch"><input type="checkbox" data-switch="follow" ${S.follow ? 'checked' : ''}><span class="knob"></span></label>
+          <span style="font-size:12px;color:var(--label-assistive);">${lines.length}줄 / 전체 ${logTotal}줄</span>
+        </div>
+      </div>
+      <div data-logpane="true" style="background:#1B1C1E;border-radius:12px;padding:14px 0;max-height:calc(100vh - 250px);overflow-y:auto;">
+        ${lines.length === 0 ? '<div style="padding:32px 20px;font-size:13px;color:rgba(255,255,255,0.45);font-family:var(--font-mono);">(빈 파일 — stderr 출력 없음, 정상)</div>' : rows}
+      </div>`;
+  },
+
+  renderSettings() {
+    const D = this.D;
+    const groups = D.settings.map((g) => `
+      <section style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;overflow:hidden;">
+        <div style="padding:11px 16px;font-size:13px;font-weight:700;border-bottom:1px solid rgba(112,115,124,0.16);background:#FAFAFB;">${esc(g.group)}</div>
+        ${g.keys.map((k) => `
+          <div style="padding:10px 16px;border-bottom:1px solid rgba(112,115,124,0.08);display:grid;grid-template-columns:220px 1fr;gap:12px;align-items:start;">
+            <div style="font-family:var(--font-mono);font-size:12px;font-weight:600;padding-top:2px;display:flex;align-items:center;gap:6px;">${esc(k.k)}${k.secret ? '<span style="font-size:10px;">🔒</span>' : ''}</div>
+            <div style="min-width:0;">
+              ${k.secret
+                ? `<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:100px;background:${k.set ? 'rgba(0,191,64,0.10)' : 'rgba(112,115,124,0.10)'};color:${k.set ? 'rgb(0,145,50)' : 'var(--label-assistive)'};">${k.set ? '설정됨' : '미설정'}</span>`
+                : `<span style="font-family:var(--font-mono);font-size:13px;">${esc(k.v === '' ? '(미설정)' : k.v)}</span>`}
+              <div style="margin-top:3px;font-size:12px;color:var(--label-alternative);">${esc(k.d)}</div>
+              ${k.warn ? `<div style="margin-top:6px;font-size:12px;color:var(--label-neutral);background:rgba(255,150,0,0.10);border:1px solid rgba(255,150,0,0.3);border-radius:8px;padding:7px 10px;">⚠ ${esc(k.warn)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </section>`).join('');
+    return `<div style="max-width:860px;display:flex;flex-direction:column;gap:16px;">
+      <div style="font-size:12px;color:var(--label-alternative);">config.env — 읽기는 _config.py 마스킹 경로 경유. 시크릿 값은 어떤 응답에도 실리지 않아요 (write-only).</div>
+      ${groups}</div>`;
+  },
+};
+
+// ── 이벤트 위임 ──
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-h]');
+  if (el) { const fn = App.H[Number(el.dataset.h)]; if (fn) fn(e); }
+});
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.input) {
+    App._focusKey = el.dataset.key;
+    App.set({ [el.dataset.input]: el.value });
+  }
+});
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.switch) App.set({ [el.dataset.switch]: el.checked });
+});
+
+// ── 부트스트랩 + 자동 새로고침 (5초 폴링, serve.py 라이브 데이터일 때만) ──
+App.render();
+App.load(false).then(() => {
+  if (LIVE && App.props.autoRefresh) {
+    setInterval(() => { if (!App.state.dlg && !App.state.pullRunning) App.load(true); }, 5000);
+  }
+});
+</script>
+</body>
+</html>

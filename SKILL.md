@@ -20,6 +20,11 @@ PLAUD 녹음을 **구독 없이(기기값만)** 빼와 전사(기본 로컬 whis
 - `INBOX_DIR` 이 볼트 안(기본값)이면 처리 전 오디오가 볼트 동기화로 클라우드에 올라간다.
   원치 않으면 볼트 밖(예: `~/Obsidian/_inbox`)으로 설정 + `install.sh` 재실행(WatchPaths 재생성).
 - macOS 전용. 모바일은 볼트 동기화(Obsidian Sync 등)로 노트만 따라오는 뷰어.
+- 관리 대시보드(선택): `python3 dashboard/serve.py` → `http://127.0.0.1:8791`. 읽기 전용
+  (state/·logs/·config 실시간 조회, 시크릿은 설정됨/미설정만 표시). 조치 버튼은 UI 프로토타입 —
+  실제 상태 파일은 바꾸지 않는다. 원격 접속은 `tailscale serve --bg --https=8443 http://127.0.0.1:8791`
+  (tailnet 전용 — Funnel 금지), 상시 실행은 `dashboard/com.plaud-obsidian.dash.plist` 를
+  `~/Library/LaunchAgents/` 에 복사 후 `launchctl load -w` (README '관리 대시보드' 참고 — 사용자가 직접 실행).
 
 ## 설치 절차 (이 순서대로 진행)
 

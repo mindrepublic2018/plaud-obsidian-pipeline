@@ -180,6 +180,38 @@ tail -f logs/pipeline.log
 
 ---
 
+## 관리 대시보드 (선택)
+
+파이프라인 상태를 브라우저에서 한눈에 보는 읽기 전용 로컬 대시보드입니다 (127.0.0.1 전용, 외부 노출 없음).
+
+```bash
+python3 dashboard/serve.py          # → http://127.0.0.1:8791
+```
+
+- 홈(잡 3개 생존·퍼널 카운터·최근 활동) / 처리 내역(노트 목록) / 실패·보류 큐 / 노트 품질(요약 실패·미검증·화자 미해결·정합성 갭) / 로그 뷰어 / 설정 조회 — 6개 화면, 5초 자동 갱신.
+- 데이터는 `state/`·`logs/`·`config.env`(시크릿은 설정됨/미설정만 표시)를 실시간으로 읽어 생성합니다. 파이프라인 상태 파일은 절대 쓰지 않습니다.
+- 조치 버튼(재시도·복구 등)은 아직 UI 프로토타입 — 확인 다이얼로그까지만 동작하고 실제 상태 파일은 바꾸지 않습니다.
+- 디자인 문서: `docs/PRD-dashboard.md` (PRD), Claude Design 프로젝트 "대시보드 디자인 작업" 기반 구현.
+
+**다른 기기에서 접속 (Tailscale, 선택)** — 서버는 127.0.0.1 바인딩을 유지한 채 `tailscale serve`로 tailnet 내부에만 프록시합니다 (공개 인터넷 노출 없음. Funnel은 쓰지 마세요):
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8791
+# → https://<이-머신>.<tailnet>.ts.net:8443  (해제: tailscale serve --https=8443 off)
+```
+
+상시 실행(재부팅 후에도 유지)은 동봉된 플리스트 템플릿의 플레이스홀더를 채워 등록:
+
+```bash
+sed -e "s|__PY__|$(command -v python3)|" -e "s|__REPO__|$PWD|" -e "s|__HOME__|$HOME|" \
+  dashboard/com.plaud-obsidian.dash.plist > ~/Library/LaunchAgents/com.plaud-obsidian.dash.plist
+launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.dash.plist
+```
+
+주의: tailnet에 다른 사용자가 있으면 그들도 대시보드(회의 제목·로그 발췌 포함)를 볼 수 있습니다 — 필요하면 Tailscale ACL로 이 포트 접근을 본인 기기로 제한하세요.
+
+---
+
 ## 동작 점검 / 트러블슈팅
 
 | 증상 | 원인 / 해결 |

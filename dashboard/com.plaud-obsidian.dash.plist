@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.plaud-obsidian.dash</string>
+  <key>ProgramArguments</key><array><string>__PY__</string><string>__REPO__/dashboard/serve.py</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string><key>HOME</key><string>__HOME__</string></dict>
+  <key>StandardOutPath</key><string>__REPO__/logs/dash.out.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/logs/dash.err.log</string>
+</dict></plist>
