@@ -145,6 +145,8 @@ cat > "$LA/$LABEL_PROC.plist" <<EOF
   <key>Label</key><string>$LABEL_PROC</string>
   <key>ProgramArguments</key><array><string>$PY</string><string>$SCRIPTS/process_inbox.py</string></array>
   <key>WatchPaths</key><array><string>$INBOX_DIR</string></array>
+  <!-- WatchPaths 는 감시 대상 폴더가 삭제·재생성되면 옛 inode 를 물고 무력화된다 — 주기 실행이 안전망 (빈 인박스면 즉시 종료, flock 으로 중복 방지) -->
+  <key>StartInterval</key><integer>600</integer>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>20</integer>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>$PATH_ENV</string><key>HOME</key><string>$HOME</string></dict>
