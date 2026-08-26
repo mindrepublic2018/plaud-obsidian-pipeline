@@ -47,3 +47,6 @@ __pycache__/
 
 # 도구 아티팩트 (oh-my-claudecode 등)
 .omc/
+
+# 로컬 툴 상태
+.orca/
