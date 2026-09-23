@@ -191,7 +191,8 @@ vault (`OUTPUT_DIR`) and reach mobile Obsidian through **whatever vault sync you
 | Symptom | Cause / Fix |
 |---|---|
 | `plaud CLI missing` | `npm install -g @plaud-ai/cli` → `plaud login` |
-| `recording list empty / query failed` | Token expired → re-run `plaud login` |
+| `recording list empty / query failed` | Token expired → re-run `plaud login`. If the "couldn't find recording ids in files output" warning repeats alongside it, the CLI/server output format changed — run `plaud files` yourself and check the id format (in 2026-09 ids gained an `of_` prefix and the parser was fixed) |
+| `🚨 pull stalled alert` log + macOS notification | Fires once after ~2h of consecutive list failures (a `✓ pull recovered` log follows on recovery). The dashboard home also shows a red "new-recording collection stalled" banner and the **last successful pull** time. See the row above for causes |
 | `model missing` | Check that `install.sh`'s download finished (`models/*.bin`) |
 | Note has transcript only, no summary (`status: summary_pending`) | `ANTHROPIC_API_KEY` not set → normal fallback. Set the key in config.env for summaries. If the key is set and it still falls back, check the "claude: HTTP ..." lines in `logs/pipeline.log` — 401 means a bad key; 429/529 are transient overloads (retried automatically) |
 | Note frontmatter says `verified: false` | `OPENAI_API_KEY` not set, or the GPT call failed → the Claude summary was kept as-is (expected behavior). Set the key and check the "gpt: ..." log lines for cross-verification. Note: `verified: true` means "the GPT cross-check pass completed" — it is **not a guarantee of factual accuracy**; verify important decisions/numbers against the transcript |

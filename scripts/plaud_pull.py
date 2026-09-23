@@ -26,6 +26,7 @@ STATE = CFG["STATE_PATH"]        # 이미 받은 id (dedup)
 SKIP = CFG["SKIP_PATH"]          # 재시도 한도 초과 등 영구 스킵
 PENDING = CFG["PENDING_PATH"]    # audio 미준비 → 재시도 대기 (id<TAB>시도횟수)
 PULL_LOCK = CFG["PULL_LOCK_PATH"]
+STREAK = CFG["PULL_STREAK_PATH"]  # 연속 실패 횟수 (무증상 장기 중단 감지)
 LOGDIR = CFG["LOG_DIR"]
 CURL = shutil.which("curl") or "/usr/bin/curl"
 PAGE_SIZE = 100
@@ -35,6 +36,9 @@ MAX_PENDING_ATTEMPTS = 96
 # 2026-09-15 경 서버가 id 에 `of_` 접두어를 붙이기 시작함 — `plaud audio` 는 접두어 포함 id 만 받는다(없으면 404).
 # 그래서 CLI 호출에는 원본 id 를 그대로 쓰고, state 기록·중복판정에는 접두어를 뗀 32-hex(state_key)를 쓴다
 # (기존 state 파일이 32-hex 로 쌓여 있어 호환 유지).
+# 목록 조회가 이 시간 이상 연속 실패하면 한 번 경보 (2026-09-15~24 에 경고 로그만 쌓이며 8일간 무증상 중단된 재발 방지)
+ALERT_AFTER_SEC = 2 * 3600
+OSASCRIPT = "/usr/bin/osascript"
 ID_RE = re.compile(r"^((?:[a-z]+_)?[0-9a-f]{32})\b")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
@@ -137,6 +141,60 @@ def state_key(fid):
     return fid.rsplit("_", 1)[-1]
 
 
+def health_transition(prev_streak, ok, alert_after):
+    """pull 1회 결과로 (새 연속실패 횟수, 이벤트) 계산. 이벤트: None / "alert" / "recovered".
+    경보는 임계치에 딱 도달한 1회만 — 매 실행 반복 알림 방지."""
+    if ok:
+        return 0, ("recovered" if prev_streak >= alert_after else None)
+    n = prev_streak + 1
+    # == 대신 "임계치를 넘는 순간" — 장애 도중 PULL_INTERVAL 이 바뀌어 alert_after 가 줄어도 경보 누락 없음
+    return n, ("alert" if prev_streak < alert_after <= n else None)
+
+
+def load_streak(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def save_streak(path, n):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(f"{n}\n")
+    os.replace(tmp, path)
+
+
+def notify(title, msg):
+    """macOS 알림센터 알림 (best-effort — 실패해도 파이프라인엔 영향 없음)."""
+    if not os.path.isfile(OSASCRIPT):
+        return
+    esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        subprocess.run([OSASCRIPT, "-e", f'display notification "{esc(msg)}" with title "{esc(title)}"'],
+                       capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def record_health(ok):
+    interval = int(CFG.get("PULL_INTERVAL") or 900)
+    alert_after = max(1, ALERT_AFTER_SEC // max(interval, 1))
+    prev = load_streak(STREAK)
+    n, event = health_transition(prev, ok, alert_after)
+    if n != prev:
+        save_streak(STREAK, n)
+    if event == "alert":
+        hours = n * interval / 3600
+        msg = (f"녹음 목록 조회가 {n}회 연속 실패 (약 {hours:.0f}시간) — 신규 녹음 수집이 멈춘 상태. "
+               "plaud login 만료 또는 CLI/서버 출력 포맷 변경 의심")
+        log(f"🚨 pull 중단 경보: {msg}")
+        notify("PLAUD pull 중단", msg)
+    elif event == "recovered":
+        log(f"✓ pull 복구 — 연속 실패 {prev}회 후 목록 조회 정상화")
+
+
 def list_all_files():
     """모든 페이지의 (id, date) 수집."""
     out = []
@@ -199,7 +257,7 @@ def pull_new():
     files = list_all_files()
     if not files:
         log("녹음 목록 비어있음/조회 실패 (plaud login 만료 여부 확인)")
-        return
+        return False
     new = [(api_id, state_key(api_id), d) for api_id, d in files
            if state_key(api_id) not in pulled and state_key(api_id) not in skipped]
     log(f"전체 {len(files)}개 / 신규·재시도 {len(new)}개")
@@ -235,6 +293,7 @@ def pull_new():
         pending.pop(fid, None)         # 받았으면 재시도 목록에서 제거
         log(f"  ✓ 받음 → {os.path.basename(dest)}")
     save_pending(PENDING, pending)
+    return True
 
 
 def main():
@@ -243,6 +302,7 @@ def main():
         return
     if not (os.path.isfile(PLAUD) or shutil.which("plaud")):
         log(f"plaud CLI 없음: {PLAUD} (npm install -g @plaud-ai/cli 후 plaud login)")
+        record_health(False)  # npm/node 업그레이드로 CLI 가 사라지는 것도 무증상 중단 — 경보 대상
         return
     migrate_legacy_state()
     # 타이머 주기보다 pull 이 오래 걸릴 때(첫 동기화 등) 겹침 방지
@@ -253,11 +313,14 @@ def main():
         log("이전 pull 아직 실행 중 — 종료")
         lockf.close()
         return
+    ok = False
     try:
-        pull_new()
+        ok = bool(pull_new())
     finally:
+        # 예외(CLI hang → TimeoutExpired 등)도 실패로 센다 — 안 세면 영원히 경보가 안 울림
         fcntl.flock(lockf, fcntl.LOCK_UN)
         lockf.close()
+        record_health(ok)
 
 
 if __name__ == "__main__":

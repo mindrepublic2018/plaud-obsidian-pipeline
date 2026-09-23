@@ -4,6 +4,7 @@
 export const now = '2026-08-18 12:52:04';
 export const lastPull = '2026-08-18 12:45:09';
 export const nextPull = '2026-08-18 13:00 예정';
+export const pullHealth = { level: 'ok', lastOk: '2026-08-18 12:45:09', failStreak: 0, ageHours: 0.1, thresholdHours: 2 };
 export const vaultName = 'MyVault';
 export const outputRel = 'Voice Memos';
 

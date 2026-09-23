@@ -71,7 +71,8 @@ PLAUD 녹음을 **구독 없이(기기값만)** 빼와 전사(기본 로컬 whis
 
 ## 트러블슈팅
 - **"plaud CLI 없음"**: `npm install -g @plaud-ai/cli` 후 `plaud login`.
-- **"녹음 목록 비어있음/조회 실패"**: 토큰 만료 → `plaud login` 재실행.
+- **"녹음 목록 비어있음/조회 실패"**: 토큰 만료 → `plaud login` 재실행(사용자에게 위임). `files 출력에서 녹음 id 를 못 찾음` 경고가 같이 반복되면 출력 포맷 변경 — `plaud files` 직접 실행해 id 형식 확인 후 `ID_RE`(`scripts/plaud_pull.py`) 점검.
+- **"🚨 pull 중단 경보"**: 목록 조회 약 2시간 연속 실패 시 1회 로그+macOS 알림(연속 실패 수는 `state/pull_fail_streak.txt`). 대시보드 홈 빨간 배너·"마지막 성공 pull" 시각으로도 확인. 원인은 위 항목.
 - **"모델 없음"**: `install.sh` 의 모델 다운로드가 끝났는지 확인(`models/*.bin`).
 - **노트는 안 생기고 전사만** (`status: summary_pending`): `ANTHROPIC_API_KEY` 미설정 → 정상 폴백. 요약 원하면 config.env 에 키 설정. 키가 있는데도 폴백되면 `logs/pipeline.log` 의 "claude: HTTP ..." 로그로 진단 — 401 은 키 오타, 429/529 는 일시 과부하(자동 재시도).
 - **frontmatter `verified: false`**: `OPENAI_API_KEY` 미설정 또는 GPT 호출 실패 — Claude 요약이 그대로 저장된 정상 동작. 로그의 "gpt: ..." 라인으로 진단.

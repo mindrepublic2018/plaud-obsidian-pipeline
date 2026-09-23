@@ -304,14 +304,16 @@ const App = {
     const S = this.state, D = this.D;
     if (!D) return [];
     return D.jobs.map((j) => {
-      const bad = (inc && j.id === 'process') || j.loaded === false || (j.exit && j.exit !== 0);
+      const ph = D.pullHealth;
+      const stalled = j.id === 'pull' && ph && ph.level === 'bad';
+      const bad = (inc && j.id === 'process') || j.loaded === false || (j.exit && j.exit !== 0) || stalled;
       const running = j.id === 'pull' && S.pullRunning;
       return {
         name: j.id, label: j.label, trigger: j.trigger,
         last: inc && j.id === 'process' ? '08-17 22:41 (exit 78)' : j.last,
         dot: bad ? 'var(--status-negative)' : 'var(--status-positive)',
         anim: running ? 'dashPulse 1.2s ease infinite' : 'none',
-        badge: inc && j.id === 'process' ? 'exit 78' : (bad ? (j.loaded === false ? '미로드' : 'exit ' + j.exit) : (running ? '실행 중' : '로드됨')),
+        badge: inc && j.id === 'process' ? 'exit 78' : (bad ? (j.loaded === false ? '미로드' : (stalled ? '수집 중단' : 'exit ' + j.exit)) : (running ? '실행 중' : '로드됨')),
         badgeBg: bad ? 'rgba(255,66,66,0.10)' : (running ? 'rgba(51,102,255,0.10)' : 'rgba(0,191,64,0.10)'),
         badgeColor: bad ? 'var(--status-negative)' : (running ? 'var(--primary-normal)' : 'rgb(0,145,50)'),
       };
@@ -324,6 +326,12 @@ const App = {
       <div class="hoverable" style="--hover-bg:rgba(255,150,0,0.16);display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;border-radius:10px;background:rgba(255,150,0,0.10);border:1px solid rgba(255,150,0,0.35);cursor:pointer;font-size:13px;color:var(--label-normal);" data-h="${this.h(() => this.go('quality', { preset: 'gap' }))}">
         <span style="color:var(--status-cautionary);font-weight:700;">⚠</span>
         <span><strong>정합성 갭</strong> — 수신 ${D.gap.pulled}건 중 노트·큐로 설명되지 않는 <strong>${D.gap.unexplained}건</strong>이 있어요. 품질 뷰에서 대차대조표 확인 →</span>
+      </div>` : '';
+    const ph = D.pullHealth;
+    const pullBanner = ph && ph.level === 'bad' ? `
+      <div class="hoverable" style="--hover-bg:rgba(255,66,66,0.12);display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;border-radius:10px;background:rgba(255,66,66,0.08);border:1px solid rgba(255,66,66,0.3);cursor:pointer;font-size:13px;color:var(--label-normal);" data-h="${this.h(() => this.go('logs'))}">
+        <span style="color:var(--status-negative);font-weight:700;">●</span>
+        <span><strong>신규 녹음 수집 중단</strong> — ${ph.lastOk ? `마지막 성공 pull ${esc(ph.lastOk.slice(5, 16))} (${esc(String(ph.ageHours))}시간 전)` : '성공한 pull 기록 없음'} · 연속 실패 ${ph.failStreak}회. plaud login 만료 또는 CLI 출력 포맷 변경을 확인하세요. 로그 보기 →</span>
       </div>` : '';
     const incBanner = inc ? `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;border-radius:10px;background:rgba(255,66,66,0.08);border:1px solid rgba(255,66,66,0.3);font-size:13px;">
@@ -372,12 +380,13 @@ const App = {
     const anomalies = [];
     if (S.failed.length > 0) anomalies.push({ text: `_failed/ 격리 파일 ${S.failed.length}건 — 전사 3회 연속 실패`, tab: 'failed' });
     if (S.pending.length > 0) anomalies.push({ text: `보류 큐 ${S.pending.length}건${S.pending.some((p) => p.tries >= 80) ? ' — 1건이 만료(96회) 임박' : ''}`, tab: 'pending' });
+    if (ph && ph.level === 'warn') anomalies.push({ text: `pull 목록 조회 ${ph.failStreak}회 연속 실패 — ${ph.thresholdHours}시간 넘으면 중단 경보`, screen: 'logs' });
     if (D.anomalies) for (const a of D.anomalies) anomalies.push({ text: a, tab: 'pending' });
     const anomaliesHtml = anomalies.length === 0
       ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--label-neutral);"><span style="color:var(--status-positive);font-weight:700;">✓</span> 격리·아카이브 실패·권한 경고 없음</div>`
-      : anomalies.map((a) => `<div class="hover-danger" style="margin-top:8px;display:flex;align-items:baseline;gap:8px;font-size:13px;color:var(--label-neutral);cursor:pointer;" data-h="${this.h(() => this.go('queues', { queueTab: a.tab }))}"><span style="color:var(--status-negative);font-weight:700;">⚠</span> ${esc(a.text)}</div>`).join('');
+      : anomalies.map((a) => `<div class="hover-danger" style="margin-top:8px;display:flex;align-items:baseline;gap:8px;font-size:13px;color:var(--label-neutral);cursor:pointer;" data-h="${this.h(() => (a.screen ? this.go(a.screen) : this.go('queues', { queueTab: a.tab })))}"><span style="color:var(--status-negative);font-weight:700;">⚠</span> ${esc(a.text)}</div>`).join('');
 
-    return `${gapBanner}${incBanner}
+    return `${pullBanner}${gapBanner}${incBanner}
       <section style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">${jobsHtml}</section>
       <section style="margin-top:16px;background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
         <div style="display:flex;align-items:baseline;gap:8px;">
@@ -399,7 +408,7 @@ const App = {
           <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
             <h2 style="margin:0;font-size:14px;font-weight:700;">다음 pull</h2>
             <div style="margin-top:8px;font-size:21px;font-weight:700;letter-spacing:-0.01em;">${esc(D.nextPull.slice(11))}</div>
-            <div style="margin-top:4px;font-size:12px;color:var(--label-alternative);">마지막 pull ${esc(D.lastPull.slice(5, 16))} · 주기 ${esc(String((D.pullInterval || 900)))}초</div>
+            <div style="margin-top:4px;font-size:12px;color:var(--label-alternative);">마지막 성공 pull ${esc(D.lastPull.slice(5, 16))} · 주기 ${esc(String((D.pullInterval || 900)))}초</div>
           </div>
           <div style="background:#FFFFFF;border:1px solid rgba(112,115,124,0.16);border-radius:12px;padding:16px;">
             <h2 style="margin:0;font-size:14px;font-weight:700;">이상 신호</h2>${anomaliesHtml}

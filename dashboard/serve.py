@@ -58,6 +58,37 @@ def last_ts(lines, needle=None):
     return None
 
 
+PULL_OK = "[pull] 전체"               # 목록 조회에 성공한 pull 1회
+PULL_FAIL = ("[pull] 녹음 목록 비어있음", "[pull] plaud CLI 없음")  # 목록 0개/조회 실패/CLI 소실 pull 1회
+
+
+def pull_health(lines, now, interval):
+    """pull 건강도. "[pull]" 로그가 찍힌다고 정상이 아니다 — 목록 조회 *성공* 시각 기준.
+    (2026-09-15~24: 실패 경고만 15분마다 찍히는 동안 '마지막 pull'이 최신으로 보여 8일간 무증상 중단)
+    level: ok / warn(최근 실패 있음) / bad(임계 시간 이상 성공 없음)."""
+    last_ok, streak = None, 0
+    for ln in reversed(lines):
+        if PULL_OK in ln:
+            m = TS_RE.match(ln)
+            last_ok = m.group(1) if m else None
+            break
+        if any(f in ln for f in PULL_FAIL):
+            streak += 1
+    threshold = max(2 * 3600, 4 * interval)
+    age = None
+    if last_ok:
+        age = (now - dt.datetime.strptime(last_ok, "%Y-%m-%d %H:%M:%S")).total_seconds()
+    if (last_ok is None and streak > 0) or (age is not None and age > threshold):
+        level = "bad"
+    elif streak > 0:
+        level = "warn"
+    else:
+        level = "ok"
+    return {"level": level, "lastOk": last_ok, "failStreak": streak,
+            "ageHours": round(age / 3600, 1) if age is not None else None,
+            "thresholdHours": round(threshold / 3600, 1)}
+
+
 def launchctl_jobs():
     """launchctl list 에서 잡 3개의 로드/종료코드 상태."""
     state = {}
@@ -162,7 +193,8 @@ def build_data():
     pipeline = read_lines(os.path.join(log_dir, "pipeline.log"))
 
     interval = int(CFG.get("PULL_INTERVAL") or 900)
-    last_pull = last_ts(pipeline, "[pull]")
+    health = pull_health(pipeline, now, interval)
+    last_pull = last_ts(pipeline, "[pull]")  # 마지막 *실행* (다음 예정 계산용)
     if last_pull:
         nxt = dt.datetime.strptime(last_pull, "%Y-%m-%d %H:%M:%S") + dt.timedelta(seconds=interval)
         next_pull = nxt.strftime("%Y-%m-%d %H:%M 예정")
@@ -173,7 +205,7 @@ def build_data():
     lstate = launchctl_jobs()
     prune_lines = read_lines(os.path.join(log_dir, "prune.out.log"))
     job_last = {
-        "pull": last_pull,
+        "pull": health["lastOk"],
         "process": last_ts(pipeline, "노트 생성") or last_ts(pipeline, "처리 시작"),
         "prune": last_ts(prune_lines),
     }
@@ -323,7 +355,8 @@ def build_data():
 
     return {
         "now": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "lastPull": last_pull or "—",
+        "lastPull": health["lastOk"] or "—",   # 마지막 *성공* pull
+        "pullHealth": health,
         "nextPull": next_pull,
         "pullInterval": interval,
         "vaultName": os.path.basename(vault.rstrip("/")) if vault else "",

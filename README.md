@@ -217,7 +217,8 @@ launchctl load -w ~/Library/LaunchAgents/com.plaud-obsidian.dash.plist
 | 증상 | 원인 / 해결 |
 |---|---|
 | `plaud CLI 없음` | `npm install -g @plaud-ai/cli` → `plaud login` |
-| `녹음 목록 비어있음/조회 실패` | 토큰 만료 → `plaud login` 재실행 |
+| `녹음 목록 비어있음/조회 실패` | 토큰 만료 → `plaud login` 재실행. `files 출력에서 녹음 id 를 못 찾음` 경고가 같이 반복되면 CLI/서버 출력 포맷 변경 — `plaud files` 를 직접 실행해 id 형식 확인(2026-09 에 `of_` 접두어가 생겨 파서를 고친 사례) |
+| `🚨 pull 중단 경보` 로그 + macOS 알림 | 목록 조회가 약 2시간 연속 실패하면 1회 경보(복구 시 `✓ pull 복구` 로그). 대시보드 홈에도 빨간 "신규 녹음 수집 중단" 배너와 **마지막 성공 pull** 시각이 뜸. 원인은 위 행 참고 |
 | `모델 없음` | `install.sh` 의 다운로드가 끝났는지(`models/*.bin`) 확인 |
 | 노트 없이 전사만 저장됨 (`status: summary_pending`) | `ANTHROPIC_API_KEY` 미설정 → 정상 폴백. 요약 원하면 config.env 에 키 설정. 키가 있는데도 폴백되면 `logs/pipeline.log` 의 "claude: HTTP ..." 로그 확인 — 401 은 키 오타, 429/529 는 일시 과부하(재시도됨) |
 | 노트 frontmatter 가 `verified: false` | `OPENAI_API_KEY` 미설정이거나 GPT 호출 실패 → Claude 요약이 그대로 저장된 정상 동작. 교차검증 원하면 키 설정 후 로그의 "gpt: ..." 확인. 참고: `verified: true` 는 "GPT 교차검증 처리를 통과했다"는 뜻이지 **요약 내용의 사실성을 보증하지 않습니다** — 중요한 결정·수치는 전문에서 직접 확인하세요 |

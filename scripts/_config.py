@@ -133,6 +133,8 @@ def load():
     cfg["PENDING_PATH"] = os.path.join(STATE_DIR, "pending_ids.txt")
     # 노트는 만들었지만 아카이브 이동이 실패한 오디오 (재전사 없이 이동만 재시도 — 중복 노트·API 비용 방지)
     cfg["PROCESSED_PATH"] = os.path.join(STATE_DIR, "processed_notes.txt")
+    # pull 연속 실패(목록 0개/조회 실패) 횟수 — 장기 무증상 중단 감지·경보용
+    cfg["PULL_STREAK_PATH"] = os.path.join(STATE_DIR, "pull_fail_streak.txt")
     # 선택 기능(클라우드 전사/화자분리)용 키 파일·경로 — config.env 값이 우선
     cfg["AAI_KEY_PATH"] = os.path.join(REPO_ROOT, ".assemblyai_key")
     cfg["HF_TOKEN_PATH"] = os.path.join(REPO_ROOT, ".hf_token")

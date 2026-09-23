@@ -58,6 +58,39 @@ class ParseFilesOutputTest(unittest.TestCase):
         self.assertEqual(items, [])
 
 
+class HealthTransitionTest(unittest.TestCase):
+    def test_success_resets_quietly(self):
+        self.assertEqual(plaud_pull.health_transition(3, True, 8), (0, None))
+
+    def test_alert_fires_once_at_threshold(self):
+        self.assertEqual(plaud_pull.health_transition(6, False, 8), (7, None))
+        self.assertEqual(plaud_pull.health_transition(7, False, 8), (8, "alert"))
+        self.assertEqual(plaud_pull.health_transition(8, False, 8), (9, None))  # 반복 알림 없음
+
+    def test_alert_not_skipped_when_threshold_shrinks_mid_outage(self):
+        # PULL_INTERVAL 을 늘려 alert_after 가 5→2 로 줄어도 다음 실패에서 경보
+        self.assertEqual(plaud_pull.health_transition(1, False, 2), (2, "alert"))
+        self.assertEqual(plaud_pull.health_transition(5, False, 2), (6, None))  # 이미 넘은 뒤엔 반복 안 함
+
+    def test_threshold_one(self):
+        self.assertEqual(plaud_pull.health_transition(0, False, 1), (1, "alert"))
+        self.assertEqual(plaud_pull.health_transition(1, True, 1), (0, "recovered"))
+
+    def test_recovery_reported_only_after_alert(self):
+        self.assertEqual(plaud_pull.health_transition(8, True, 8), (0, "recovered"))
+        self.assertEqual(plaud_pull.health_transition(7, True, 8), (0, None))
+
+    def test_streak_file_roundtrip_and_missing(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, "streak.txt")
+            self.assertEqual(plaud_pull.load_streak(p), 0)
+            plaud_pull.save_streak(p, 5)
+            self.assertEqual(plaud_pull.load_streak(p), 5)
+        finally:
+            shutil.rmtree(d)
+
+
 class StateKeyTest(unittest.TestCase):
     def test_strips_prefix(self):
         self.assertEqual(plaud_pull.state_key(f"of_{FID1}"), FID1)
