@@ -55,7 +55,7 @@ Optional read-only web dashboard implementing `docs/PRD-dashboard.md` (design im
 
 ### Known fragility
 
-`plaud files` has no JSON output; `parse_files_output()` regex-parses human-readable text (32-hex id + `YYYY-MM-DD`). A CLI format change breaks silently except for the zero-ids warning in `list_all_files()`. If the CLI ever gains JSON output, switch to it.
+`plaud files` has no JSON output; `parse_files_output()` regex-parses human-readable text (optionally `of_`-prefixed 32-hex id + `YYYY-MM-DD`). Since 2026-09-15 the server returns `of_<hex>` ids and `plaud audio` accepts **only** the prefixed form (bare hex → 404), so CLI calls use the raw id while state files/dedup use `state_key()` (bare hex, backward-compatible). A CLI format change breaks silently except for the zero-ids warning in `list_all_files()` — that warning repeating every 15 min means pulling has stopped (09-15→09-24 outage went unnoticed for 8 days). If the CLI ever gains JSON output, switch to it.
 
 ### Testing pattern
 
