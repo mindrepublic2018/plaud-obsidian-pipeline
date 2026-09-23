@@ -32,7 +32,10 @@ PAGE_SIZE = 100
 # audio 가 서버에서 준비될 때까지 재시도. 15분 간격 × 96 ≈ 24h 후에도 안 되면 영구 스킵.
 # (긴 녹음은 업로드/서버처리에 시간이 걸려, 첫 pull 때 일시적으로 audio 가 없을 수 있음)
 MAX_PENDING_ATTEMPTS = 96
-ID_RE = re.compile(r"^([0-9a-f]{32})\b")
+# 2026-09-15 경 서버가 id 에 `of_` 접두어를 붙이기 시작함 — `plaud audio` 는 접두어 포함 id 만 받는다(없으면 404).
+# 그래서 CLI 호출에는 원본 id 를 그대로 쓰고, state 기록·중복판정에는 접두어를 뗀 32-hex(state_key)를 쓴다
+# (기존 state 파일이 32-hex 로 쌓여 있어 호환 유지).
+ID_RE = re.compile(r"^((?:[a-z]+_)?[0-9a-f]{32})\b")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
@@ -129,6 +132,11 @@ def parse_files_output(text, default_date=None):
     return items
 
 
+def state_key(fid):
+    """state 파일·중복판정용 키: `of_` 같은 접두어를 뗀 32-hex."""
+    return fid.rsplit("_", 1)[-1]
+
+
 def list_all_files():
     """모든 페이지의 (id, date) 수집."""
     out = []
@@ -192,10 +200,11 @@ def pull_new():
     if not files:
         log("녹음 목록 비어있음/조회 실패 (plaud login 만료 여부 확인)")
         return
-    new = [(fid, d) for fid, d in files if fid not in pulled and fid not in skipped]
+    new = [(api_id, state_key(api_id), d) for api_id, d in files
+           if state_key(api_id) not in pulled and state_key(api_id) not in skipped]
     log(f"전체 {len(files)}개 / 신규·재시도 {len(new)}개")
-    for fid, d in new:
-        url = get_audio_url(fid)
+    for api_id, fid, d in new:
+        url = get_audio_url(api_id)
         if not url:
             # audio 미준비 — 영구 스킵하지 말고 재시도. 한도 초과 시에만 영구 스킵.
             n = pending.get(fid, 0) + 1

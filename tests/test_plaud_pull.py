@@ -40,6 +40,31 @@ class ParseFilesOutputTest(unittest.TestCase):
     def test_empty_output(self):
         self.assertEqual(plaud_pull.parse_files_output("", default_date="2026-01-01"), [])
 
+    def test_prefixed_id_current_cli_format(self):
+        # 2026-09 이후 실제 출력: 테이블 들여쓰기 + `of_` 접두어, NAME 열에 녹음 시각, DATE 열에 업로드일
+        text = (
+            "Files on this page: 2\n\n"
+            "  ID                                  NAME                 DATE          DURATION\n"
+            "  ──────────────────────────────────────────────────────────────────────\n"
+            f"  of_{FID1}  2026-09-14 17:59:17   2026-09-22    51m22s\n"
+            f"  of_{FID2}  2026-09-16 11:00:07   2026-09-16    1h00m\n"
+        )
+        items = plaud_pull.parse_files_output(text, default_date="2026-01-01")
+        # 첫 날짜 = 녹음일(업로드일 아님), id 는 CLI 호출용으로 접두어 유지
+        self.assertEqual(items, [(f"of_{FID1}", "2026-09-14"), (f"of_{FID2}", "2026-09-16")])
+
+    def test_header_row_is_not_an_id(self):
+        items = plaud_pull.parse_files_output("  ID    NAME    DATE\n", default_date="2026-01-01")
+        self.assertEqual(items, [])
+
+
+class StateKeyTest(unittest.TestCase):
+    def test_strips_prefix(self):
+        self.assertEqual(plaud_pull.state_key(f"of_{FID1}"), FID1)
+
+    def test_bare_id_unchanged(self):
+        self.assertEqual(plaud_pull.state_key(FID1), FID1)
+
 
 class PendingStateTest(unittest.TestCase):
     def setUp(self):
