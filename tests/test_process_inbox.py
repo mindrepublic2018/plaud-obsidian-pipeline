@@ -143,6 +143,10 @@ class BuildNoteTest(unittest.TestCase):
         self.assertNotIn("summary_model:", note)
         self.assertNotIn("verified:", note)
 
+    def test_tags_include_call_memo(self):
+        note = process_inbox.build_note("음성메모", "", self.UTTS, True, {}, "2026-08-10")
+        self.assertIn("tags: [음성메모, call-memo, 자동전사]\ntype: call-memo\n", note)
+
 
 class FailCountTest(unittest.TestCase):
     def setUp(self):

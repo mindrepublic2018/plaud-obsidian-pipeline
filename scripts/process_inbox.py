@@ -405,7 +405,7 @@ def build_note(title, body, utterances, diarized, speaker_map, created,
     # summary_model/verified 는 요약이 있을 때만 frontmatter 에 기록 —
     # verified: true = GPT 교차검증 통과(교정 반영 또는 무수정 확인).
     status = "active" if body else "summary_pending"
-    fm = f"---\ncreated: {created}\ntags: [음성메모, 자동전사]\ntype: voice-memo\nstatus: {status}\n"
+    fm = f"---\ncreated: {created}\ntags: [음성메모, call-memo, 자동전사]\ntype: call-memo\nstatus: {status}\n"
     if body and summary_model:
         fm += f"summary_model: {summary_model}\n"
         fm += f"verified: {'true' if verified else 'false'}\n"
